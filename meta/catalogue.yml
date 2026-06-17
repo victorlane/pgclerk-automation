@@ -1,0 +1,362 @@
+---
+# Operator-app catalogue. SOURCE OF TRUTH for what playbooks the
+# pgclerk UI shows, in what filter group, and with what guard rails.
+#
+# Schema (validated by scripts/validate-catalogue.py):
+#
+#   - key:           kebab-case identifier, stable across renames.
+#     title:         display name in the UI.
+#     playbook:      path relative to repo root.
+#     category:      install | maintenance | observability | managed
+#     surface:       linux | rhel | debian | terraform | aws | gcp | azure | postgres
+#     pg_kind:       install | task | n/a — "install" = brings PG up,
+#                    "task" = day-2 op against a running cluster.
+#     destructive:   true if the play drops/overwrites data.
+#     requires_window: true if scheduling against the cluster's
+#                    maintenance window is required.
+#     min_pg_version: optional lower bound (string).
+#     description:   one short line (≤120 chars).
+#
+# Filter rules (the UI groups by these axes):
+#   1. Category   — install / maintenance / observability / managed
+#   2. Surface    — OS scope vs cloud vs postgres-only
+#   3. PG kind    — install vs task vs n/a
+#   4. Destructive flag — orthogonal toggle
+
+version: 1
+
+entries:
+  # ---------- Install (atoms) ----------
+  - key: pg-standalone
+    title: PostgreSQL · standalone
+    playbook: ansible/playbooks/install/postgres-standalone.yml
+    category: install
+    surface: postgres
+    pg_kind: install
+    destructive: false
+    requires_window: false
+    description: Bring up a single-node PostgreSQL on prepared hosts.
+
+  - key: pg-ha-patroni
+    title: PostgreSQL · HA with Patroni (embedded etcd)
+    playbook: ansible/playbooks/install/patroni-ha-embedded.yml
+    category: install
+    surface: postgres
+    pg_kind: install
+    destructive: false
+    requires_window: false
+    description: HA cluster with Patroni + embedded etcd on PG nodes.
+
+  - key: pg-ha-patroni-ext
+    title: PostgreSQL · HA with Patroni (external etcd)
+    playbook: ansible/playbooks/install/patroni-ha-external-etcd.yml
+    category: install
+    surface: postgres
+    pg_kind: install
+    destructive: false
+    requires_window: false
+    description: HA cluster with a dedicated etcd quorum.
+
+  - key: pgbackrest-repo
+    title: pgBackRest · repository host
+    playbook: ansible/playbooks/install/pgbackrest-repo.yml
+    category: install
+    surface: postgres
+    pg_kind: install
+    destructive: false
+    requires_window: false
+    description: Stand up the pgBackRest repository server.
+
+  - key: haproxy
+    title: HAProxy · cluster LB
+    playbook: ansible/playbooks/install/haproxy.yml
+    category: install
+    surface: linux
+    pg_kind: n/a
+    destructive: false
+    requires_window: false
+    description: HAProxy in front of a Patroni cluster.
+
+  - key: konnectivity-agent
+    title: Konnectivity · agent install
+    playbook: ansible/playbooks/install/konnectivity-agent.yml
+    category: install
+    surface: linux
+    pg_kind: n/a
+    destructive: false
+    requires_window: false
+    description: Install the networking diagnostic agent on a host.
+
+  # ---------- OS-level ----------
+  - key: os-baseline
+    title: OS · baseline hardening
+    playbook: ansible/playbooks/install/os-baseline.yml
+    category: install
+    surface: linux
+    pg_kind: n/a
+    destructive: false
+    requires_window: false
+    description: Common baseline (timezone, NTP, ulimits, swap, sysctl).
+
+  - key: os-update
+    title: OS · package updates
+    playbook: ansible/playbooks/maintenance/os-update.yml
+    category: maintenance
+    surface: linux
+    pg_kind: n/a
+    destructive: false
+    requires_window: true
+    description: Apply OS package updates with optional reboot.
+
+  - key: cis-audit-cluster
+    title: OS · CIS audit (cluster)
+    playbook: ansible/playbooks/maintenance/cis-audit-cluster.yml
+    category: maintenance
+    surface: linux
+    pg_kind: n/a
+    destructive: false
+    requires_window: false
+    description: Run CIS Benchmark checks across cluster hosts.
+
+  # ---------- Maintenance (PG tasks) ----------
+  - key: backup-now
+    title: pgBackRest · ad-hoc backup
+    playbook: ansible/playbooks/maintenance/backup-now.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Trigger an immediate full or incremental backup.
+
+  - key: pg-dump-now
+    title: pg_dump · ad-hoc dump
+    playbook: ansible/playbooks/maintenance/pg-dump-now.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Run pg_dump against a database; ship output to S3/GCS.
+
+  - key: pg-conf-set
+    title: PostgreSQL · update conf
+    playbook: ansible/playbooks/maintenance/pg-conf-set.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: true
+    description: Apply postgresql.conf changes with controlled reload/restart.
+
+  - key: switchover
+    title: PostgreSQL · planned switchover
+    playbook: ansible/playbooks/maintenance/switchover.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: true
+    description: Move primary role to a chosen replica.
+
+  - key: failover
+    title: PostgreSQL · forced failover
+    playbook: ansible/playbooks/maintenance/failover.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: true
+    requires_window: false
+    description: Promote a replica when the primary is unreachable.
+
+  - key: replica-rebuild
+    title: PostgreSQL · replica rebuild
+    playbook: ansible/playbooks/maintenance/replica-rebuild.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: true
+    requires_window: true
+    description: Reseed a divergent replica from the current primary.
+
+  - key: restore
+    title: PostgreSQL · restore from backup
+    playbook: ansible/playbooks/maintenance/restore.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: true
+    requires_window: true
+    description: PITR or full restore via pgBackRest.
+
+  - key: drain-node
+    title: Cluster · drain node
+    playbook: ansible/playbooks/maintenance/drain-node.yml
+    category: maintenance
+    surface: linux
+    pg_kind: task
+    destructive: false
+    requires_window: true
+    description: Take a node out of rotation gracefully.
+
+  - key: drop-connections
+    title: PostgreSQL · drop connections
+    playbook: ansible/playbooks/maintenance/drop-connections.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Terminate idle/long-running backends matching a filter.
+
+  - key: add-database
+    title: PostgreSQL · add database
+    playbook: ansible/playbooks/maintenance/add-database.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Create a new database + roles + default privileges.
+
+  - key: add-user
+    title: PostgreSQL · add user
+    playbook: ansible/playbooks/maintenance/add-user.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Create a new role with scoped grants.
+
+  - key: rotate-password
+    title: PostgreSQL · rotate password
+    playbook: ansible/playbooks/maintenance/rotate-password.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Roll a role's password; emit to Vault if configured.
+
+  - key: certificate-rotate
+    title: TLS · rotate certificates
+    playbook: ansible/playbooks/maintenance/certificate-rotate.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: true
+    description: Rotate server / replication certificates.
+
+  - key: reindex
+    title: PostgreSQL · reindex
+    playbook: ansible/playbooks/maintenance/reindex.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: true
+    description: REINDEX CONCURRENTLY a database or matched tables.
+
+  - key: analyze
+    title: PostgreSQL · ANALYZE
+    playbook: ansible/playbooks/maintenance/analyze.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Refresh planner statistics.
+
+  - key: autotune
+    title: PostgreSQL · autotune
+    playbook: ansible/playbooks/maintenance/autotune.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: true
+    description: Derive memory + parallelism settings from host facts.
+
+  - key: logical-replication-setup
+    title: PostgreSQL · logical replication setup
+    playbook: ansible/playbooks/maintenance/logical-replication-setup.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Configure a publication + subscription between clusters.
+
+  - key: replication-slot-manage
+    title: PostgreSQL · replication slots
+    playbook: ansible/playbooks/maintenance/replication-slot-manage.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Inspect / drop / create replication slots.
+
+  # ---------- Observability ----------
+  - key: monitoring-exporters
+    title: Observability · install exporters
+    playbook: ansible/playbooks/observability/monitoring-exporters.yml
+    category: observability
+    surface: linux
+    pg_kind: n/a
+    destructive: false
+    requires_window: false
+    description: node_exporter + postgres_exporter on cluster hosts.
+
+  - key: observability-stack
+    title: Observability · full stack
+    playbook: ansible/playbooks/observability/observability-stack.yml
+    category: observability
+    surface: linux
+    pg_kind: n/a
+    destructive: false
+    requires_window: false
+    description: Exporters + Alloy + remote-write targets.
+
+  # ---------- Managed offerings ----------
+  - key: managed-aws-rds
+    title: AWS RDS · provision
+    playbook: ansible/playbooks/managed/aws-rds.yml
+    category: managed
+    surface: aws
+    pg_kind: install
+    destructive: false
+    requires_window: false
+    description: Provision Postgres on RDS via Ansible orchestration.
+
+  - key: managed-aws-aurora
+    title: AWS Aurora · provision
+    playbook: ansible/playbooks/managed/aws-aurora.yml
+    category: managed
+    surface: aws
+    pg_kind: install
+    destructive: false
+    requires_window: false
+    description: Provision Aurora Postgres cluster.
+
+  - key: managed-gcp-cloudsql
+    title: GCP Cloud SQL · provision
+    playbook: ansible/playbooks/managed/gcp-cloudsql.yml
+    category: managed
+    surface: gcp
+    pg_kind: install
+    destructive: false
+    requires_window: false
+    description: Provision Postgres on Cloud SQL.
+
+  - key: managed-azure-flexible-server
+    title: Azure Flexible Server · provision
+    playbook: ansible/playbooks/managed/azure-flexible-server.yml
+    category: managed
+    surface: azure
+    pg_kind: install
+    destructive: false
+    requires_window: false
+    description: Provision Postgres on Azure Flexible Server.

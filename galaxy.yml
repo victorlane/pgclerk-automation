@@ -1,0 +1,35 @@
+---
+# Ansible Galaxy collection metadata. The roles in `ansible/roles/` are
+# packaged as the `pgclerk.cluster` collection — operators can install
+# them via `ansible-galaxy collection install pgclerk.cluster` once we
+# publish to Galaxy.
+namespace: pgclerk
+name: cluster
+version: 0.1.0
+readme: README.md
+authors:
+  - pgclerk <ops@pgclerk.com>
+description: >
+  PostgreSQL cluster management — roles + playbooks for OS hardening,
+  PostgreSQL installation (standalone / Patroni HA / external etcd),
+  pgBackRest, HAProxy, pgBouncer, observability, and day-2 operations.
+license:
+  - Apache-2.0
+tags:
+  - database
+  - postgresql
+  - patroni
+  - etcd
+  - haproxy
+  - pgbackrest
+  - cluster
+  - replication
+  - backup
+  - observability
+repository: https://github.com/victorlane/pgclerk-automation
+issues: https://github.com/victorlane/pgclerk-automation/issues
+build_ignore:
+  - .github
+  - .terraform
+  - terraform
+  - meta/catalogue.schema.json

@@ -1,0 +1,28 @@
+---
+# Defaults shared across every cluster. Override per-customer in
+# `inventories/<env>/<customer>/group_vars/`.
+
+# Postgres defaults
+postgres_version: "18"
+postgres_port: 5432
+postgres_listen_addresses: "*"
+
+# pgBackRest defaults
+pgbackrest_repo_type: s3
+pgbackrest_process_max: 4
+
+# Patroni defaults
+patroni_rest_api_port: 8008
+patroni_postgresql_use_pg_rewind: true
+
+# HAProxy
+haproxy_port_primary: 5432
+haproxy_port_replica: 5433
+haproxy_stats_port: 7000
+
+# Konnectivity (networking diagnostic agent)
+konnectivity_agent_user: konnectivity
+konnectivity_agent_install_dir: /opt/pgclerk-konnectivity
+
+# Maintenance
+maintenance_window_timezone: UTC

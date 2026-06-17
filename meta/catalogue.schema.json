@@ -1,0 +1,35 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://pgclerk.com/schemas/catalogue.v1.json",
+	"title": "pgclerk automation catalogue",
+	"description": "Catalogue entries describe every playbook the pgclerk operator UI knows about. The operator app reads this file via Semaphore sync and filters / dispatches against it.",
+	"type": "object",
+	"required": ["version", "entries"],
+	"additionalProperties": false,
+	"properties": {
+		"version": { "const": 1 },
+		"entries": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/Entry" }
+		}
+	},
+	"$defs": {
+		"Entry": {
+			"type": "object",
+			"required": ["key", "title", "playbook", "category", "surface", "pg_kind", "destructive", "requires_window", "description"],
+			"additionalProperties": false,
+			"properties": {
+				"key": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 64 },
+				"title": { "type": "string", "minLength": 3, "maxLength": 80 },
+				"playbook": { "type": "string", "pattern": "^ansible/playbooks/[a-z0-9/_-]+\\.yml$" },
+				"category": { "enum": ["install", "maintenance", "observability", "managed"] },
+				"surface": { "enum": ["linux", "rhel", "debian", "terraform", "aws", "gcp", "azure", "postgres"] },
+				"pg_kind": { "enum": ["install", "task", "n/a"] },
+				"destructive": { "type": "boolean" },
+				"requires_window": { "type": "boolean" },
+				"min_pg_version": { "type": "string" },
+				"description": { "type": "string", "maxLength": 120 }
+			}
+		}
+	}
+}

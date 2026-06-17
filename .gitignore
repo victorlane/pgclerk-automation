@@ -1,0 +1,33 @@
+## Ansible
+.ansible-facts-cache/
+*.retry
+collections/ansible_collections/
+
+## Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terragrunt-cache/
+
+## Editors
+.vscode/
+.idea/
+.DS_Store
+
+## Python
+__pycache__/
+*.pyc
+.venv/
+
+## Secrets — never commit
+*.pem
+*.key
+*.crt
+.env
+.env.local
