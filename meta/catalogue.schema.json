@@ -21,7 +21,14 @@
 			"properties": {
 				"key": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 64 },
 				"title": { "type": "string", "minLength": 3, "maxLength": 80 },
-				"playbook": { "type": "string", "pattern": "^ansible/playbooks/[a-z0-9/_-]+\\.yml$" },
+				"playbook": {
+					"type": "string",
+					"description": "Either an Ansible playbook file under ansible/playbooks/*.yml, or a Terraform working directory under terraform/environments/* (no trailing slash).",
+					"oneOf": [
+						{ "pattern": "^ansible/playbooks/[a-z0-9/_-]+\\.yml$" },
+						{ "pattern": "^terraform/environments/[a-z0-9/_-]+$" }
+					]
+				},
 				"category": { "enum": ["install", "maintenance", "observability", "managed"] },
 				"surface": { "enum": ["linux", "rhel", "debian", "terraform", "aws", "gcp", "azure", "postgres"] },
 				"pg_kind": { "enum": ["install", "task", "n/a"] },

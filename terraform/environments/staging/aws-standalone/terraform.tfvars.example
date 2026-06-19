@@ -1,0 +1,2 @@
+pg_count            = 1
+pg_instance_type    = "t3.medium"

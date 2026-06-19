@@ -27,6 +27,87 @@ version: 1
 
 entries:
   # ---------- Install (atoms) ----------
+  # ---------- Terraform topologies (cloud infra; pre-PG install) ----------
+  - key: aws-tf-standalone
+    title: AWS · Standalone (1 PG VM)
+    playbook: terraform/environments/staging/aws-standalone
+    category: install
+    surface: terraform
+    pg_kind: n/a
+    destructive: true
+    requires_window: false
+    description: VPC + 1 EC2 PG VM + bastion. Disposable dev env.
+
+  - key: aws-tf-replication-embedded
+    title: AWS · HA Patroni (embedded etcd)
+    playbook: terraform/environments/staging/aws-replication-embedded
+    category: install
+    surface: terraform
+    pg_kind: n/a
+    destructive: true
+    requires_window: false
+    description: 3 EC2 PG nodes with etcd colocated. Patroni HA.
+
+  - key: aws-tf-replication-external-etcd
+    title: AWS · HA Patroni (external etcd)
+    playbook: terraform/environments/staging/aws-replication-external-etcd
+    category: install
+    surface: terraform
+    pg_kind: n/a
+    destructive: true
+    requires_window: false
+    description: 3 PG + 3 dedicated etcd EC2 nodes. Patroni HA.
+
+  - key: aws-tf-full
+    title: AWS · HA + backup
+    playbook: terraform/environments/staging/aws-full
+    category: install
+    surface: terraform
+    pg_kind: n/a
+    destructive: true
+    requires_window: false
+    description: 3 PG + 3 etcd + 1 pgBackRest repo host on EC2.
+
+  - key: gcp-tf-standalone
+    title: GCP · Standalone (1 PG VM)
+    playbook: terraform/environments/staging/gcp-standalone
+    category: install
+    surface: terraform
+    pg_kind: n/a
+    destructive: true
+    requires_window: false
+    description: VPC + 1 GCE PG VM. Sandbox topology.
+
+  - key: gcp-tf-replication-embedded
+    title: GCP · HA Patroni (embedded etcd)
+    playbook: terraform/environments/staging/gcp-replication-embedded
+    category: install
+    surface: terraform
+    pg_kind: n/a
+    destructive: true
+    requires_window: false
+    description: 3 GCE PG nodes with etcd colocated.
+
+  - key: azure-tf-standalone
+    title: Azure · Standalone (1 PG VM)
+    playbook: terraform/environments/staging/azure-standalone
+    category: install
+    surface: terraform
+    pg_kind: n/a
+    destructive: true
+    requires_window: false
+    description: VNet + 1 Azure VM running PG. Sandbox topology.
+
+  - key: azure-tf-replication-embedded
+    title: Azure · HA Patroni (embedded etcd)
+    playbook: terraform/environments/staging/azure-replication-embedded
+    category: install
+    surface: terraform
+    pg_kind: n/a
+    destructive: true
+    requires_window: false
+    description: 3 Azure VMs running Patroni HA with embedded etcd.
+
   - key: pg-standalone
     title: PostgreSQL · standalone
     playbook: ansible/playbooks/install/postgres-standalone.yml
