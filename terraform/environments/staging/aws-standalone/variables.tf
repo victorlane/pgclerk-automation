@@ -1,65 +1,69 @@
+# All variables get sane defaults so `terraform plan` runs without
+# arguments during CI / local validation. pgclerk overrides them at
+# dispatch time via -var flags from the cluster's jitPlan.
+
 variable "region" {
-  type = string
-  description = "Cloud region (e.g. eu-west-1 for AWS, europe-west4 for GCP, westeurope for Azure)."
+  type        = string
+  description = "AWS region (e.g. eu-west-1)."
+  default     = "eu-west-1"
 }
 
 variable "owner" {
-  type = string
-  description = "Resource owner tag — usually the customer slug."
+  type        = string
+  description = "Customer slug — drives Name tags."
   default     = "pgclerk"
 }
 
+variable "cluster_name" {
+  type        = string
+  description = "Cluster name from pgclerk."
+  default     = "sandbox"
+}
+
 variable "key_name" {
-  type = string
-  description = "SSH key pair name uploaded to the cloud provider; pgclerk's Semaphore deploy key."
+  type        = string
+  description = "EC2 KeyPair name to create."
   default     = "pgclerk-dev"
 }
 
+variable "ssh_public_key" {
+  type        = string
+  description = "OpenSSH public key blob. Injected by pgclerk at dispatch."
+  default     = ""
+}
+
 variable "allow_ssh_cidr" {
-  type = string
-  description = "CIDR allowed to SSH into PG hosts. Set this to the operator's public IP (or Semaphore's egress IP)."
+  type        = string
+  description = "CIDR allowed SSH access to PG host. Use the operator's IP, or Semaphore's egress."
   default     = "0.0.0.0/0"
 }
 
 variable "use_spot" {
-  type = bool
-  description = "Use spot/preemptible instances where the provider allows."
-  default     = true
+  type        = bool
+  default     = false
+  description = "Use a spot instance for the PG node."
 }
 
 variable "pg_count" {
-  type = number
-  description = "PostgreSQL node count."
+  type        = number
+  default     = 1
+  description = "Reserved for symmetry with HA topologies — ignored here (always 1)."
 }
 
 variable "pg_instance_type" {
-  type = string
-  description = "Provider-specific instance type for PG nodes."
+  type        = string
+  default     = "t3.medium"
 }
 
 variable "pg_data_volume_size" {
-  type = number
-  description = "Data volume size in GiB."
+  type        = number
   default     = 20
 }
 
-variable "etcd_count" {
-  type = number
-  default = 0
-}
-variable "etcd_instance_type" {
-  type = string
-  default = "t3.small"
-}
-variable "backup_count" {
-  type = number
-  default = 0
-}
-variable "backup_instance_type" {
-  type = string
-  default = "t3.medium"
-}
-variable "backup_data_volume_size" {
-  type = number
-  default = 50
-}
+# Reserved-for-symmetry vars so callers can pass the full jitPlan
+# argument set to any topology without per-topology branching.
+variable "etcd_count"             { type = number, default = 0 }
+variable "etcd_instance_type"     { type = string, default = "t3.small" }
+variable "backup_count"           { type = number, default = 0 }
+variable "backup_instance_type"   { type = string, default = "t3.medium" }
+variable "backup_data_volume_size" { type = number, default = 50 }
