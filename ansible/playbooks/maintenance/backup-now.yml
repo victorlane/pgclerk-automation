@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         backup-now
+# title:       pgBackRest · ad-hoc backup
+# category:    maintenance
+# surface:     postgres
+# destructive: False
+
+- name: "pgBackRest · ad-hoc backup"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'backup-now'"
+          - "Replace ansible/playbooks/maintenance/backup-now.yml with the real playbook."

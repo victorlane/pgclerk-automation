@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         pgbackrest-repo
+# title:       pgBackRest · repository host
+# category:    install
+# surface:     postgres
+# destructive: False
+
+- name: "pgBackRest · repository host"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'pgbackrest-repo'"
+          - "Replace ansible/playbooks/install/pgbackrest-repo.yml with the real playbook."

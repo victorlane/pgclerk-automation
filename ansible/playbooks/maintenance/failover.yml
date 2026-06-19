@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         failover
+# title:       PostgreSQL · forced failover
+# category:    maintenance
+# surface:     postgres
+# destructive: True
+
+- name: "PostgreSQL · forced failover"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'failover'"
+          - "Replace ansible/playbooks/maintenance/failover.yml with the real playbook."

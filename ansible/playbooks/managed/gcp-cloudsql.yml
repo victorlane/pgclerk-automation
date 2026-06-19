@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         managed-gcp-cloudsql
+# title:       GCP Cloud SQL · provision
+# category:    managed
+# surface:     gcp
+# destructive: False
+
+- name: "GCP Cloud SQL · provision"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'managed-gcp-cloudsql'"
+          - "Replace ansible/playbooks/managed/gcp-cloudsql.yml with the real playbook."

@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         monitoring-exporters
+# title:       Observability · install exporters
+# category:    observability
+# surface:     linux
+# destructive: False
+
+- name: "Observability · install exporters"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'monitoring-exporters'"
+          - "Replace ansible/playbooks/observability/monitoring-exporters.yml with the real playbook."

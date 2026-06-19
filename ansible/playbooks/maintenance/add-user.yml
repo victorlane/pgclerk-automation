@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         add-user
+# title:       PostgreSQL · add user
+# category:    maintenance
+# surface:     postgres
+# destructive: False
+
+- name: "PostgreSQL · add user"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'add-user'"
+          - "Replace ansible/playbooks/maintenance/add-user.yml with the real playbook."

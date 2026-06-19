@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         drop-connections
+# title:       PostgreSQL · drop connections
+# category:    maintenance
+# surface:     postgres
+# destructive: False
+
+- name: "PostgreSQL · drop connections"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'drop-connections'"
+          - "Replace ansible/playbooks/maintenance/drop-connections.yml with the real playbook."

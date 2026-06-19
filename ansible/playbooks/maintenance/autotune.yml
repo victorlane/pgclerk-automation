@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         autotune
+# title:       PostgreSQL · autotune
+# category:    maintenance
+# surface:     postgres
+# destructive: False
+
+- name: "PostgreSQL · autotune"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'autotune'"
+          - "Replace ansible/playbooks/maintenance/autotune.yml with the real playbook."

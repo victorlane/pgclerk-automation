@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         replication-slot-manage
+# title:       PostgreSQL · replication slots
+# category:    maintenance
+# surface:     postgres
+# destructive: False
+
+- name: "PostgreSQL · replication slots"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'replication-slot-manage'"
+          - "Replace ansible/playbooks/maintenance/replication-slot-manage.yml with the real playbook."

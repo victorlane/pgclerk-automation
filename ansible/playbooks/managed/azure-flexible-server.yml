@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         managed-azure-flexible-server
+# title:       Azure Flexible Server · provision
+# category:    managed
+# surface:     azure
+# destructive: False
+
+- name: "Azure Flexible Server · provision"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'managed-azure-flexible-server'"
+          - "Replace ansible/playbooks/managed/azure-flexible-server.yml with the real playbook."

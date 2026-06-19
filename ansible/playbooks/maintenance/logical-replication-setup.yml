@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         logical-replication-setup
+# title:       PostgreSQL · logical replication setup
+# category:    maintenance
+# surface:     postgres
+# destructive: False
+
+- name: "PostgreSQL · logical replication setup"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'logical-replication-setup'"
+          - "Replace ansible/playbooks/maintenance/logical-replication-setup.yml with the real playbook."

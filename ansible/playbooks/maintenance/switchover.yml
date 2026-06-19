@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         switchover
+# title:       PostgreSQL · planned switchover
+# category:    maintenance
+# surface:     postgres
+# destructive: False
+
+- name: "PostgreSQL · planned switchover"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'switchover'"
+          - "Replace ansible/playbooks/maintenance/switchover.yml with the real playbook."

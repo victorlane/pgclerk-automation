@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         pg-conf-set
+# title:       PostgreSQL · update conf
+# category:    maintenance
+# surface:     postgres
+# destructive: False
+
+- name: "PostgreSQL · update conf"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'pg-conf-set'"
+          - "Replace ansible/playbooks/maintenance/pg-conf-set.yml with the real playbook."

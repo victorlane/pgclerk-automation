@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         restore
+# title:       PostgreSQL · restore from backup
+# category:    maintenance
+# surface:     postgres
+# destructive: True
+
+- name: "PostgreSQL · restore from backup"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'restore'"
+          - "Replace ansible/playbooks/maintenance/restore.yml with the real playbook."

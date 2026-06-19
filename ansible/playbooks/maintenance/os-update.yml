@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         os-update
+# title:       OS · package updates
+# category:    maintenance
+# surface:     linux
+# destructive: False
+
+- name: "OS · package updates"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'os-update'"
+          - "Replace ansible/playbooks/maintenance/os-update.yml with the real playbook."

@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         cis-audit-cluster
+# title:       OS · CIS audit (cluster)
+# category:    maintenance
+# surface:     linux
+# destructive: False
+
+- name: "OS · CIS audit (cluster)"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'cis-audit-cluster'"
+          - "Replace ansible/playbooks/maintenance/cis-audit-cluster.yml with the real playbook."

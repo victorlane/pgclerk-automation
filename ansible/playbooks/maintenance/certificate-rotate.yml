@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         certificate-rotate
+# title:       TLS · rotate certificates
+# category:    maintenance
+# surface:     postgres
+# destructive: False
+
+- name: "TLS · rotate certificates"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'certificate-rotate'"
+          - "Replace ansible/playbooks/maintenance/certificate-rotate.yml with the real playbook."

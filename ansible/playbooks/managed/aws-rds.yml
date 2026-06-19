@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         managed-aws-rds
+# title:       AWS RDS · provision
+# category:    managed
+# surface:     aws
+# destructive: False
+
+- name: "AWS RDS · provision"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'managed-aws-rds'"
+          - "Replace ansible/playbooks/managed/aws-rds.yml with the real playbook."

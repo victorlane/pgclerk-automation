@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         konnectivity-agent
+# title:       Konnectivity · agent install
+# category:    install
+# surface:     linux
+# destructive: False
+
+- name: "Konnectivity · agent install"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'konnectivity-agent'"
+          - "Replace ansible/playbooks/install/konnectivity-agent.yml with the real playbook."

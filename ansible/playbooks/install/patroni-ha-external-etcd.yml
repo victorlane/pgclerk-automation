@@ -1,0 +1,17 @@
+---
+# Stub generated from meta/catalogue.yml — replace with real automation.
+# key:         pg-ha-patroni-ext
+# title:       PostgreSQL · HA with Patroni (external etcd)
+# category:    install
+# surface:     postgres
+# destructive: False
+
+- name: "PostgreSQL · HA with Patroni (external etcd)"
+  hosts: "{{ pgm_target_hosts | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Announce stub dispatch
+      ansible.builtin.debug:
+        msg:
+          - "pgclerk: dispatched stub for 'pg-ha-patroni-ext'"
+          - "Replace ansible/playbooks/install/patroni-ha-external-etcd.yml with the real playbook."
