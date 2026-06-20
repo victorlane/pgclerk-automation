@@ -1,11 +1,18 @@
-# Stub Terraform module — replace with real resources.
-# Generated from meta/catalogue.yml. Provider: aws
-# Topology: pg=3 etcd=0 backup=0
+# AWS · Patroni HA with embedded etcd. 3 PG VMs across 3 AZs, each
+# running etcd colocated. VPC + KP shared by all nodes. Outputs the
+# pg_hosts list shaped for jit-seed.
 
 terraform {
   required_version = ">= 1.5"
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 5.0" }
+  }
+  backend "s3" {
+    bucket         = "pgclerk-tf-state-eu-west-3"
+    key            = "default.tfstate"
+    region         = "eu-west-3"
+    encrypt        = true
+    dynamodb_table = "pgclerk-tf-locks"
   }
 }
 
@@ -13,12 +20,54 @@ provider "aws" {
   region = var.region
 }
 
-
 locals {
-  topology = {
-    provider     = "aws"
-    pg_count     = var.pg_count
-    etcd_count   = try(var.etcd_count, 0)
-    backup_count = 0
+  base_tags = {
+    "pgclerk:owner"    = var.owner
+    "pgclerk:cluster"  = var.cluster_name
+    "pgclerk:topology" = "aws-replication-embedded"
   }
+  # Round-robin across up to 3 AZs; collapse to fewer if pg_count<3.
+  az_keys = slice(["a", "b", "c"], 0, min(3, max(1, var.pg_count)))
+}
+
+module "network" {
+  source         = "../../../modules/network/aws"
+  name           = "${var.owner}-${var.cluster_name}"
+  vpc_cidr       = "10.42.0.0/16"
+  azs            = local.az_keys
+  allow_ssh_cidr = var.allow_ssh_cidr
+  tags           = local.base_tags
+}
+
+resource "aws_key_pair" "operator" {
+  key_name   = var.key_name
+  public_key = var.ssh_public_key
+  tags       = local.base_tags
+}
+
+module "pg" {
+  count               = var.pg_count
+  source              = "../../../modules/compute/aws-pg-node"
+  name                = "${var.owner}-${var.cluster_name}-pg-${count.index + 1}"
+  subnet_id           = module.network.subnet_ids[count.index % length(module.network.subnet_ids)]
+  security_group_id   = module.network.pg_sg_id
+  instance_type       = var.pg_instance_type
+  key_name            = aws_key_pair.operator.key_name
+  role                = "pg"
+  data_volume_gib     = var.pg_data_volume_size
+  use_spot            = var.use_spot
+  base_ssh_public_key = var.ssh_public_key
+  extra_ssh_keys      = var.extra_ssh_keys
+  tags                = local.base_tags
+}
+
+output "pg_hosts" {
+  description = "List of { hostname, ip, role } for /api/clusters/:id/jit-seed."
+  value = [
+    for n in module.pg : {
+      hostname = n.hostname
+      ip       = n.public_ip
+      role     = n.role
+    }
+  ]
 }
