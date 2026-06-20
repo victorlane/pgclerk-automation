@@ -15,20 +15,55 @@ terraform {
   }
 }
 
-variable "name"             { type = string }
-variable "subnet_id"         { type = string }
-variable "security_group_id" { type = string }
-variable "instance_type"     { type = string }
-variable "key_name"          { type = string }
-variable "role"              { type = string }
-variable "data_volume_gib"   { type = number, default = 20 }
-variable "use_spot"          { type = bool, default = false }
-variable "tags"              { type = map(string), default = {} }
+variable "name"              { type = string }
+variable "subnet_id"          { type = string }
+variable "security_group_id"  { type = string }
+variable "instance_type"      { type = string }
+variable "key_name"           { type = string }
+variable "role"               { type = string }
+
+variable "data_volume_gib" {
+  type    = number
+  default = 20
+}
+
+variable "use_spot" {
+  type    = bool
+  default = false
+}
+
+variable "tags" {
+  type    = map(string)
+  default = {}
+}
 
 variable "ami_id" {
   type        = string
   default     = ""
   description = "Override AMI id. Empty = look up Rocky 9 via the AMI data source."
+}
+
+# Operator-supplied SSH public keys that pgclerk's cloud-init layer
+# writes into authorized_keys for every standard user that exists on
+# the AMI. The base key (var.base_ssh_public_key) is the pgclerk
+# Bootstrap key — Ansible uses it for every connection. The extra
+# keys are admin keys the operator wants to keep direct SSH access
+# with (one OpenSSH line per element).
+variable "base_ssh_public_key" {
+  type        = string
+  description = "OpenSSH public key Ansible uses for first contact. Required."
+}
+
+variable "extra_ssh_keys" {
+  type        = list(string)
+  default     = []
+  description = "Additional OpenSSH public key lines authorised on every standard user."
+}
+
+variable "extra_ssh_users" {
+  type        = list(string)
+  default     = ["rocky", "ec2-user", "ubuntu", "admin", "centos", "root"]
+  description = "User accounts whose authorized_keys gets the base + extra keys appended at first boot. Missing users are skipped — cloud-init's ssh_authorized_keys + write_files runs idempotently."
 }
 
 # Rocky Linux 9 official AMIs (publisher 792107900819).
@@ -48,6 +83,43 @@ data "aws_ami" "rocky9" {
 
 locals {
   ami_id = var.ami_id != "" ? var.ami_id : data.aws_ami.rocky9[0].id
+
+  # cloud-init bakes the host so Bootstrap can SSH in cleanly:
+  #   1. Authorise the pgclerk Bootstrap public key on each of the
+  #      AMI's standard accounts (rocky / root / ec2-user / ubuntu /
+  #      admin / centos). Ansible picks whichever one the distro
+  #      uses; idempotent grep means re-running is safe.
+  #   2. Create a dedicated `pgmadmin` user with NOPASSWD sudo and
+  #      the operator's extra_ssh_keys authorised — that's how human
+  #      admins log in. The Bootstrap key is NOT trusted here, and
+  #      the admin keys are NOT trusted on root, so neither side can
+  #      escalate into the other without explicit sudo.
+  cloud_init = <<-EOT
+    #cloud-config
+    users:
+      - name: pgmadmin
+        gecos: pgclerk admin
+        shell: /bin/bash
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        groups: wheel,sudo
+        ssh_authorized_keys:
+        %{for k in var.extra_ssh_keys ~}
+          - ${jsonencode(k)}
+        %{endfor ~}
+    runcmd:
+    %{for u in var.extra_ssh_users ~}
+      - |
+        if id -u ${u} >/dev/null 2>&1; then
+          home=$(getent passwd ${u} | cut -d: -f6)
+          mkdir -p $home/.ssh
+          chmod 700 $home/.ssh
+          touch $home/.ssh/authorized_keys
+          chmod 600 $home/.ssh/authorized_keys
+          grep -qxF ${jsonencode(var.base_ssh_public_key)} $home/.ssh/authorized_keys || echo ${jsonencode(var.base_ssh_public_key)} >> $home/.ssh/authorized_keys
+          chown -R ${u}:${u} $home/.ssh 2>/dev/null || true
+        fi
+    %{endfor ~}
+  EOT
 }
 
 resource "aws_instance" "this" {
@@ -57,6 +129,8 @@ resource "aws_instance" "this" {
   vpc_security_group_ids      = [var.security_group_id]
   key_name                    = var.key_name
   associate_public_ip_address = true
+  user_data                   = local.cloud_init
+  user_data_replace_on_change = false
 
   root_block_device {
     volume_size           = 20

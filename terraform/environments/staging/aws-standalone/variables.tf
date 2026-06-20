@@ -60,10 +60,35 @@ variable "pg_data_volume_size" {
   default     = 20
 }
 
+# Admin SSH keys propagated to every standard user on the PG host
+# (rocky / ec2-user / ubuntu / admin / root). One OpenSSH line per
+# list element. pgclerk passes these in via TF_VAR_extra_ssh_keys
+# when the cluster carries an admin_ssh_keys array on the jitPlan.
+variable "extra_ssh_keys" {
+  type        = list(string)
+  default     = []
+  description = "Additional OpenSSH public key lines authorised for every standard user on every PG host."
+}
+
 # Reserved-for-symmetry vars so callers can pass the full jitPlan
 # argument set to any topology without per-topology branching.
-variable "etcd_count"             { type = number, default = 0 }
-variable "etcd_instance_type"     { type = string, default = "t3.small" }
-variable "backup_count"           { type = number, default = 0 }
-variable "backup_instance_type"   { type = string, default = "t3.medium" }
-variable "backup_data_volume_size" { type = number, default = 50 }
+variable "etcd_count" {
+  type    = number
+  default = 0
+}
+variable "etcd_instance_type" {
+  type    = string
+  default = "t3.small"
+}
+variable "backup_count" {
+  type    = number
+  default = 0
+}
+variable "backup_instance_type" {
+  type    = string
+  default = "t3.medium"
+}
+variable "backup_data_volume_size" {
+  type    = number
+  default = 50
+}

@@ -44,8 +44,9 @@ module "network" {
 }
 
 # Upload the operator's public SSH key into AWS so EC2 has something
-# to put in /root/.ssh/authorized_keys at first boot. The matching
-# private key is on the Semaphore runner via the pgm-deploy ssh key.
+# to put in the distro's default user's authorized_keys at first boot.
+# The matching private key lives in Semaphore under pgm-vm-* and is
+# what Ansible uses for every subsequent connection.
 resource "aws_key_pair" "operator" {
   key_name   = var.key_name
   public_key = var.ssh_public_key
@@ -53,16 +54,18 @@ resource "aws_key_pair" "operator" {
 }
 
 module "pg" {
-  source            = "../../../modules/compute/aws-pg-node"
-  name              = "${var.owner}-${var.cluster_name}-pg-1"
-  subnet_id         = module.network.subnet_ids[0]
-  security_group_id = module.network.pg_sg_id
-  instance_type     = var.pg_instance_type
-  key_name          = aws_key_pair.operator.key_name
-  role              = "pg"
-  data_volume_gib   = var.pg_data_volume_size
-  use_spot          = var.use_spot
-  tags              = local.base_tags
+  source              = "../../../modules/compute/aws-pg-node"
+  name                = "${var.owner}-${var.cluster_name}-pg-1"
+  subnet_id           = module.network.subnet_ids[0]
+  security_group_id   = module.network.pg_sg_id
+  instance_type       = var.pg_instance_type
+  key_name            = aws_key_pair.operator.key_name
+  role                = "pg"
+  data_volume_gib     = var.pg_data_volume_size
+  use_spot            = var.use_spot
+  base_ssh_public_key = var.ssh_public_key
+  extra_ssh_keys      = var.extra_ssh_keys
+  tags                = local.base_tags
 }
 
 # Shape consumed by the jit-seed POST body. Always a list, even with
