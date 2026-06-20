@@ -27,6 +27,28 @@ variable "data_volume_gib" {
   default = 20
 }
 
+# Per-role disk knobs pgclerk's dispatcher injects via TF_VAR_*.
+# Operators can override defaults from the wizard's disk card. EBS
+# accepts iops on gp3/io1/io2 and throughput on gp3 — leave them at
+# 0 to let AWS use the default for the chosen volume_type.
+variable "disk_type" {
+  type        = string
+  default     = "gp3"
+  description = "EBS volume type for the data volume. gp3 / gp2 / io1 / io2 / st1 / sc1."
+}
+
+variable "disk_iops" {
+  type        = number
+  default     = 0
+  description = "Provisioned IOPS. Honoured for gp3 (3000-16000) / io1 / io2. 0 = AWS default."
+}
+
+variable "disk_throughput_mbps" {
+  type        = number
+  default     = 0
+  description = "Throughput MB/s. Honoured for gp3 (125-1000). 0 = AWS default."
+}
+
 variable "use_spot" {
   type    = bool
   default = false
@@ -141,7 +163,12 @@ resource "aws_instance" "this" {
   ebs_block_device {
     device_name           = "/dev/sdf"
     volume_size           = var.data_volume_gib
-    volume_type           = "gp3"
+    volume_type           = var.disk_type
+    # iops + throughput are only meaningful on gp3/io1/io2. Passing 0
+    # on a volume type that rejects them would fail validation; we
+    # null out the field so AWS uses the type's default.
+    iops       = var.disk_iops > 0 ? var.disk_iops : null
+    throughput = var.disk_throughput_mbps > 0 && var.disk_type == "gp3" ? var.disk_throughput_mbps : null
     delete_on_termination = true
   }
 

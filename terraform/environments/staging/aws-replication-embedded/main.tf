@@ -54,7 +54,10 @@ module "pg" {
   instance_type       = var.pg_instance_type
   key_name            = aws_key_pair.operator.key_name
   role                = "pg"
-  data_volume_gib     = var.pg_data_volume_size
+  data_volume_gib      = var.pg_disk_size_gib > 0 ? var.pg_disk_size_gib : var.pg_data_volume_size
+  disk_type            = var.pg_disk_type
+  disk_iops            = var.pg_disk_iops
+  disk_throughput_mbps = var.pg_disk_throughput_mbps
   use_spot            = var.use_spot
   base_ssh_public_key = var.ssh_public_key
   extra_ssh_keys      = var.extra_ssh_keys

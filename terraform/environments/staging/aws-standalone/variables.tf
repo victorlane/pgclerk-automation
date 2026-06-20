@@ -92,3 +92,55 @@ variable "backup_data_volume_size" {
   type    = number
   default = 50
 }
+
+# ----- Disk knobs per role (pgclerk dispatcher injects via TF_VAR_*) -----
+variable "pg_disk_type" {
+  type    = string
+  default = "gp3"
+}
+variable "pg_disk_size_gib" {
+  type    = number
+  default = 0
+}
+variable "pg_disk_iops" {
+  type    = number
+  default = 0
+}
+variable "pg_disk_throughput_mbps" {
+  type    = number
+  default = 0
+}
+
+variable "etcd_disk_type" {
+  type    = string
+  default = "gp3"
+}
+variable "etcd_disk_size_gib" {
+  type    = number
+  default = 0
+}
+variable "etcd_disk_iops" {
+  type    = number
+  default = 0
+}
+variable "etcd_disk_throughput_mbps" {
+  type    = number
+  default = 0
+}
+
+variable "backup_disk_type" {
+  type    = string
+  default = "gp3"
+}
+variable "backup_disk_size_gib" {
+  type    = number
+  default = 0
+}
+variable "backup_disk_iops" {
+  type    = number
+  default = 0
+}
+variable "backup_disk_throughput_mbps" {
+  type    = number
+  default = 0
+}
