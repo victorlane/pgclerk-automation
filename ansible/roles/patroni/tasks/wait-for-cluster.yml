@@ -43,8 +43,8 @@
   retries: "{{ patroni_wait_for_cluster_retries }}"
   delay: "{{ patroni_wait_for_cluster_delay }}"
   until:
-  - _patronictl_list.rc == 0
-  - (_patronictl_list.stdout | from_json | length) | int >= (_patroni_expected_members | int)
+    - _patronictl_list.rc == 0
+    - (_patronictl_list.stdout | from_json | length) | int >= (_patroni_expected_members | int)
 
 - name: Show final cluster state
   ansible.builtin.command:

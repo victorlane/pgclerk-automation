@@ -16,8 +16,8 @@
     state: present
   register: _wd_modprobe
   failed_when:
-  - _wd_modprobe is failed
-  - patroni_watchdog_mode == 'required'
+    - _wd_modprobe is failed
+    - patroni_watchdog_mode == 'required'
 
 - name: Persist watchdog module load across reboots
   ansible.builtin.copy:
@@ -69,8 +69,8 @@
     group: postgres
     mode: "0600"
   when:
-  - _wd_stat.stat.exists | default(false)
-  - _wd_stat.stat.pw_name | default('') != 'postgres'
+    - _wd_stat.stat.exists | default(false)
+    - _wd_stat.stat.pw_name | default('') != 'postgres'
 
 - name: Refuse to continue when watchdog is required but device is missing
   ansible.builtin.assert:

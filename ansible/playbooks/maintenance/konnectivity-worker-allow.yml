@@ -20,33 +20,33 @@
   hosts: postgres_servers
   become: true
   vars:
-    konnectivity_worker_label: "konnectivity-worker"
+    konnectivity_worker_label: konnectivity-worker
   tasks:
-  - name: Assert inputs
-    ansible.builtin.assert:
-      that:
-      - konnectivity_worker_ips is defined and konnectivity_worker_ips | length > 0
-      - konnectivity_app_db is defined and konnectivity_app_db | length > 0
-      - konnectivity_app_user is defined and konnectivity_app_user | length > 0
-      fail_msg: "konnectivity_worker_ips, konnectivity_app_db, konnectivity_app_user required"
+    - name: Assert inputs
+      ansible.builtin.assert:
+        that:
+          - konnectivity_worker_ips is defined and konnectivity_worker_ips | length > 0
+          - konnectivity_app_db is defined and konnectivity_app_db | length > 0
+          - konnectivity_app_user is defined and konnectivity_app_user | length > 0
+        fail_msg: konnectivity_worker_ips, konnectivity_app_db, konnectivity_app_user required
 
-  - name: Open 5432 to worker IPs (RHEL family)
-    ansible.posix.firewalld:
-      rich_rule: "rule family=ipv4 source address={{ item }} port port=5432 protocol=tcp accept"
-      permanent: true
-      immediate: true
-      state: enabled
-    loop: "{{ konnectivity_worker_ips }}"
-    when: ansible_facts.os_family == 'RedHat'
+    - name: Open 5432 to worker IPs (RHEL family)
+      ansible.posix.firewalld:
+        rich_rule: rule family=ipv4 source address={{ item }} port port=5432 protocol=tcp accept
+        permanent: true
+        immediate: true
+        state: enabled
+      loop: "{{ konnectivity_worker_ips }}"
+      when: ansible_facts.os_family == 'RedHat'
 
-  - name: Open 5432 to worker IPs (Debian family)
-    community.general.ufw:
-      rule: allow
-      proto: tcp
-      port: '5432'
-      from_ip: "{{ item }}"
-    loop: "{{ konnectivity_worker_ips }}"
-    when: ansible_facts.os_family == 'Debian'
+    - name: Open 5432 to worker IPs (Debian family)
+      community.general.ufw:
+        rule: allow
+        proto: tcp
+        port: "5432"
+        from_ip: "{{ item }}"
+      loop: "{{ konnectivity_worker_ips }}"
+      when: ansible_facts.os_family == 'Debian'
 
 - name: Worker allow · pg_hba
   hosts: postgres_primary
@@ -58,28 +58,28 @@
       hostssl {{ konnectivity_app_db }} {{ konnectivity_app_user }} {{ ip }} scram-sha-256   # {{ konnectivity_worker_label }}
       {% endfor %}
   tasks:
-  - name: Print Patroni mode instructions
-    ansible.builtin.debug:
-      msg: |
-        Patroni mode detected. Do NOT edit pg_hba.conf directly. Add this
-        block under bootstrap.dcs.postgresql.pg_hba in your patroni.yml,
-        re-apply the patroni role, then `patronictl reload`:
+    - name: Print Patroni mode instructions
+      ansible.builtin.debug:
+        msg: |
+          Patroni mode detected. Do NOT edit pg_hba.conf directly. Add this
+          block under bootstrap.dcs.postgresql.pg_hba in your patroni.yml,
+          re-apply the patroni role, then `patronictl reload`:
 
-        {{ _hba_lines }}
-    when: postgresql_ha_mode | default('standalone') == 'patroni'
+          {{ _hba_lines }}
+      when: postgresql_ha_mode | default('standalone') == 'patroni'
 
-  - name: Append pg_hba lines (standalone)
-    ansible.builtin.blockinfile:
-      path: "{{ pgsql_data_directory }}/pg_hba.conf"
-      block: "{{ _hba_lines }}"
-      marker: "# {mark} KONNECTIVITY: {{ konnectivity_worker_label }}"
-      insertafter: EOF
-      backup: true
-    when: postgresql_ha_mode | default('standalone') == 'standalone'
-    notify: reload postgres
+    - name: Append pg_hba lines (standalone)
+      ansible.builtin.blockinfile:
+        path: "{{ pgsql_data_directory }}/pg_hba.conf"
+        block: "{{ _hba_lines }}"
+        marker: "# {mark} KONNECTIVITY: {{ konnectivity_worker_label }}"
+        insertafter: EOF
+        backup: true
+      when: postgresql_ha_mode | default('standalone') == 'standalone'
+      notify: Reload postgres
 
   handlers:
-  - name: reload postgres
-    ansible.builtin.service:
-      name: postgresql
-      state: reloaded
+    - name: Reload postgres
+      ansible.builtin.service:
+        name: postgresql
+        state: reloaded

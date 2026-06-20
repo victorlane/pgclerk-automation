@@ -24,7 +24,7 @@
 
 - name: Apply baseline (family={{ _os_family_slug }})
   ansible.builtin.include_role:
-    name: "os_{{ _os_family_slug }}_baseline"
+    name: os_{{ _os_family_slug }}_baseline
   vars:
     # Pass-through for the pgBackRest peer-allow list.  When non-empty,
     # sshd accepts postgres logins from the listed CIDRs (in addition to
@@ -33,20 +33,20 @@
 
 - name: Apply packages (family={{ _os_family_slug }})
   ansible.builtin.include_role:
-    name: "os_{{ _os_family_slug }}_packages"
+    name: os_{{ _os_family_slug }}_packages
   vars:
     packages_extra: "{{ os_baseline_packages_extra | default([]) }}"
 
 - name: Apply firewall (family={{ _os_family_slug }})
   ansible.builtin.include_role:
-    name: "os_{{ _os_family_slug }}_firewall"
+    name: os_{{ _os_family_slug }}_firewall
   vars:
     firewall_rules: "{{ os_baseline_firewall_rules | default([]) }}"
     firewall_services: "{{ os_baseline_firewall_services | default([]) }}"
 
 - name: Apply selinux/apparmor (family={{ _os_family_slug }})
   ansible.builtin.include_role:
-    name: "os_{{ _os_family_slug }}_selinux"
+    name: os_{{ _os_family_slug }}_selinux
   vars:
     selinux_fcontexts: "{{ os_baseline_selinux_fcontexts | default([]) }}"
     selinux_booleans: "{{ os_baseline_selinux_booleans | default({}) }}"

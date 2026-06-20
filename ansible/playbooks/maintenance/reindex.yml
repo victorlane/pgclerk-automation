@@ -32,61 +32,61 @@
     reindex_target: DATABASE
     reindex_concurrently: true
   tasks:
-  - name: Refuse to run without an explicit --limit
-    ansible.builtin.assert:
-      that: ansible_limit is defined
-      fail_msg: >-
-        Refusing to run reindex against the entire inventory. Re-run with
-        --limit <customer_group_or_host>.
+    - name: Refuse to run without an explicit --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          Refusing to run reindex against the entire inventory. Re-run with
+          --limit <customer_group_or_host>.
 
-  - name: Assert inputs are coherent
-    ansible.builtin.assert:
-      that:
-      - db_name is defined
-      - db_name | length > 0
-      - reindex_target | upper in ['DATABASE', 'SCHEMA', 'TABLE', 'INDEX']
-      - (reindex_target | upper == 'DATABASE') or (reindex_target_name is defined and reindex_target_name | length > 0)
-      - not ((reindex_target | upper == 'DATABASE') and (reindex_concurrently | bool))
-      fail_msg: >-
-        Required: db_name and reindex_target in (DATABASE|SCHEMA|TABLE|INDEX).
-        reindex_target_name is required for non-DATABASE targets.
-        REINDEX DATABASE CONCURRENTLY is not supported by PostgreSQL --
-        set reindex_concurrently=false to reindex an entire database.
+    - name: Assert inputs are coherent
+      ansible.builtin.assert:
+        that:
+          - db_name is defined
+          - db_name | length > 0
+          - reindex_target | upper in ['DATABASE', 'SCHEMA', 'TABLE', 'INDEX']
+          - (reindex_target | upper == 'DATABASE') or (reindex_target_name is defined and reindex_target_name | length > 0)
+          - not ((reindex_target | upper == 'DATABASE') and (reindex_concurrently | bool))
+        fail_msg: >-
+          Required: db_name and reindex_target in (DATABASE|SCHEMA|TABLE|INDEX).
+          reindex_target_name is required for non-DATABASE targets.
+          REINDEX DATABASE CONCURRENTLY is not supported by PostgreSQL --
+          set reindex_concurrently=false to reindex an entire database.
 
-  - name: Compose REINDEX statement
-    ansible.builtin.set_fact:
-      _reindex_sql: >-
-        REINDEX
-        {{ 'TABLE' if (reindex_target | upper) == 'TABLE' else
-           'INDEX' if (reindex_target | upper) == 'INDEX' else
-           'SCHEMA' if (reindex_target | upper) == 'SCHEMA' else
-           'DATABASE' }}
-        {{ 'CONCURRENTLY' if reindex_concurrently | bool else '' }}
-        {{ (reindex_target_name if (reindex_target | upper) != 'DATABASE' else db_name) }}
+    - name: Compose REINDEX statement
+      ansible.builtin.set_fact:
+        _reindex_sql: >-
+          REINDEX
+          {{ 'TABLE' if (reindex_target | upper) == 'TABLE' else
+             'INDEX' if (reindex_target | upper) == 'INDEX' else
+             'SCHEMA' if (reindex_target | upper) == 'SCHEMA' else
+             'DATABASE' }}
+          {{ 'CONCURRENTLY' if reindex_concurrently | bool else '' }}
+          {{ (reindex_target_name if (reindex_target | upper) != 'DATABASE' else db_name) }}
 
-  - name: Record start time
-    ansible.builtin.set_fact:
-      _reindex_start: "{{ lookup('pipe', 'date -u +%FT%TZ') }}"
+    - name: Record start time
+      ansible.builtin.set_fact:
+        _reindex_start: "{{ lookup('pipe', 'date -u +%FT%TZ') }}"
 
-  - name: Execute REINDEX
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: "{{ db_name }}"
-      autocommit: true
-      query: "{{ _reindex_sql }}"
-    register: _reindex_result
+    - name: Execute REINDEX
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: "{{ db_name }}"
+        autocommit: true
+        query: "{{ _reindex_sql }}"
+      register: _reindex_result
 
-  - name: Record end time
-    ansible.builtin.set_fact:
-      _reindex_end: "{{ lookup('pipe', 'date -u +%FT%TZ') }}"
+    - name: Record end time
+      ansible.builtin.set_fact:
+        _reindex_end: "{{ lookup('pipe', 'date -u +%FT%TZ') }}"
 
-  - name: Report REINDEX outcome
-    ansible.builtin.debug:
-      msg:
-      - "Database:        {{ db_name }}"
-      - "Target:          {{ reindex_target | upper }}"
-      - "Target name:     {{ reindex_target_name | default(db_name) }}"
-      - "Concurrently:    {{ reindex_concurrently | bool }}"
-      - "Statement:       {{ _reindex_sql | trim }}"
-      - "Started:         {{ _reindex_start }}"
-      - "Ended:           {{ _reindex_end }}"
+    - name: Report REINDEX outcome
+      ansible.builtin.debug:
+        msg:
+          - "Database:        {{ db_name }}"
+          - "Target:          {{ reindex_target | upper }}"
+          - "Target name:     {{ reindex_target_name | default(db_name) }}"
+          - "Concurrently:    {{ reindex_concurrently | bool }}"
+          - "Statement:       {{ _reindex_sql | trim }}"
+          - "Started:         {{ _reindex_start }}"
+          - "Ended:           {{ _reindex_end }}"

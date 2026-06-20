@@ -15,7 +15,8 @@
 
 - name: Install PGDG RPM repository
   ansible.builtin.dnf:
-    name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_facts['distribution_major_version'] }}-{{ _pgbr_pgdg_repo_arch }}/pgdg-redhat-repo-latest.noarch.rpm"
+    name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_facts['distribution_major_version'] }}-{{ _pgbr_pgdg_repo_arch
+      }}/pgdg-redhat-repo-latest.noarch.rpm
     state: present
     disable_gpg_check: true
   when: not _pgbr_pgdg_repo_stat.stat.exists

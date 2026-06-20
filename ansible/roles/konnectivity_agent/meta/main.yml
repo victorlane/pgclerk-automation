@@ -7,17 +7,17 @@ galaxy_info:
   license: MIT
   min_ansible_version: "2.18"
   platforms:
-  - name: EL
-    versions: ['8', '9']
-  - name: Debian
-    versions: ['bookworm']
-  - name: Ubuntu
-    versions: ['jammy', 'noble']
-  - name: Amazon
-    versions: ['2023']
+    - name: EL
+      versions: ["8", "9"]
+    - name: Debian
+      versions: [bookworm]
+    - name: Ubuntu
+      versions: [jammy, noble]
+    - name: Amazon
+      versions: ["2023"]
   galaxy_tags:
-  - pgclerk
-  - konnectivity
-  - postgres
-  - telemetry
+    - pgclerk
+    - konnectivity
+    - postgres
+    - telemetry
 dependencies: []

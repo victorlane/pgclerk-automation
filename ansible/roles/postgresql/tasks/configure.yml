@@ -46,8 +46,8 @@
   ansible.builtin.include_tasks: autotune.yml
   when: postgresql_autotune | bool
   tags:
-  - never
-  - autotune
+    - never
+    - autotune
 
 # Resolve final values.  Precedence: explicit postgresql_<knob> > autotune
 # value > empty (PG default).
@@ -69,7 +69,8 @@
     _pg_max_parallel_workers: "{{ postgresql_max_parallel_workers | default(_pgtuned_max_parallel_workers, true) }}"
     _pg_max_parallel_workers_per_gather: "{{ postgresql_max_parallel_workers_per_gather | default(_pgtuned_max_parallel_workers_per_gather, true) }}"
     _pg_max_parallel_maintenance_workers: "{{ postgresql_max_parallel_maintenance_workers | default(_pgtuned_max_parallel_maintenance_workers, true) }}"
-    _pg_max_slot_wal_keep_size: "{{ postgresql_max_slot_wal_keep_size | default(_pgtuned_max_slot_wal_keep_size_mb ~ 'MB' if _pgtuned_max_slot_wal_keep_size_mb else '', true) }}"
+    _pg_max_slot_wal_keep_size: "{{ postgresql_max_slot_wal_keep_size | default(_pgtuned_max_slot_wal_keep_size_mb ~ 'MB' if _pgtuned_max_slot_wal_keep_size_mb else
+      '', true) }}"
     _pg_huge_pages: "{{ postgresql_huge_pages | default(_pgtuned_huge_pages, true) }}"
     _pg_jit: "{{ postgresql_jit | default(_pgtuned_jit, true) }}"
     _pg_wal_compression: "{{ postgresql_wal_compression | default(_pgtuned_wal_compression, true) }}"
@@ -129,32 +130,32 @@
 - name: Set restart-required key catalogue
   ansible.builtin.set_fact:
     _pg_restart_required_keys:
-    - shared_buffers
-    - max_connections
-    - max_worker_processes
-    - listen_addresses
-    - port
-    - wal_level
-    - max_wal_senders
-    - max_replication_slots
-    - max_prepared_transactions
-    - wal_buffers
-    - shared_preload_libraries
-    - huge_pages
-    - data_directory
-    - hba_file
-    - ident_file
-    - logging_collector
-    - huge_pages
-    - track_io_timing
-    # jit, wal_compression, hot_standby_feedback, autovacuum_*,
-    # bgwriter_*, idle_in_transaction_session_timeout,
-    # effective_io_concurrency, maintenance_io_concurrency,
-    # random_page_cost, default_statistics_target,
-    # max_slot_wal_keep_size, log_autovacuum_min_duration,
-    # max_parallel_*, max_wal_size, min_wal_size,
-    # checkpoint_completion_target -- all reload-only (PG context=sighup or
-    # user/superuser). They are intentionally NOT listed here.
+      - shared_buffers
+      - max_connections
+      - max_worker_processes
+      - listen_addresses
+      - port
+      - wal_level
+      - max_wal_senders
+      - max_replication_slots
+      - max_prepared_transactions
+      - wal_buffers
+      - shared_preload_libraries
+      - huge_pages
+      - data_directory
+      - hba_file
+      - ident_file
+      - logging_collector
+      - huge_pages
+      - track_io_timing
+# jit, wal_compression, hot_standby_feedback, autovacuum_*,
+# bgwriter_*, idle_in_transaction_session_timeout,
+# effective_io_concurrency, maintenance_io_concurrency,
+# random_page_cost, default_statistics_target,
+# max_slot_wal_keep_size, log_autovacuum_min_duration,
+# max_parallel_*, max_wal_size, min_wal_size,
+# checkpoint_completion_target -- all reload-only (PG context=sighup or
+# user/superuser). They are intentionally NOT listed here.
 
 - name: Compute whether restart is required vs reload-only
   ansible.builtin.set_fact:
@@ -186,30 +187,30 @@
   become_user: postgres
   community.postgresql.postgresql_query:
     db: postgres
-    query: "SELECT pg_reload_conf()"
+    query: SELECT pg_reload_conf()
   when:
-  - _pg_reload_required | bool
-  - not (postgresql_restart_required | bool)
-  - _pg_running | bool
+    - _pg_reload_required | bool
+    - not (postgresql_restart_required | bool)
+    - _pg_running | bool
   changed_when: true
 
 - name: Surface restart-required notice to the DBA
   ansible.builtin.debug:
     msg:
-    - "############################################################"
-    - "POSTGRES RESTART REQUIRED on {{ inventory_hostname }}"
-    - "The following changed config keys take effect only after a"
-    - "full restart of postgresql:"
-    - "  {{ _pg_keys_needing_restart | join(', ') }}"
-    - ""
-    - "The role did NOT restart automatically -- you decide when."
-    - "When ready, run:"
-    - "  ansible -i <inventory> {{ inventory_hostname }} -m systemd -a"
-    - "    'name={{ postgresql_service }} state=restarted' --become"
-    - "Or schedule a restart through your usual maintenance window."
-    - "############################################################"
+      - "############################################################"
+      - POSTGRES RESTART REQUIRED on {{ inventory_hostname }}
+      - The following changed config keys take effect only after a
+      - "full restart of postgresql:"
+      - "  {{ _pg_keys_needing_restart | join(', ') }}"
+      - ""
+      - The role did NOT restart automatically -- you decide when.
+      - "When ready, run:"
+      - "  ansible -i <inventory> {{ inventory_hostname }} -m systemd -a"
+      - "    'name={{ postgresql_service }} state=restarted' --become"
+      - Or schedule a restart through your usual maintenance window.
+      - "############################################################"
   when:
-  - postgresql_restart_required | bool
+    - postgresql_restart_required | bool
 
 - name: Deploy pg_hba.conf
   ansible.builtin.template:
@@ -229,8 +230,8 @@
   become_user: postgres
   community.postgresql.postgresql_query:
     db: postgres
-    query: "SELECT pg_reload_conf()"
+    query: SELECT pg_reload_conf()
   when:
-  - _pg_hba_apply is changed
-  - _pg_running | bool
+    - _pg_hba_apply is changed
+    - _pg_running | bool
   changed_when: true

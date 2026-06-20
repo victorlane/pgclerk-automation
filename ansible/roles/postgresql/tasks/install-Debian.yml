@@ -3,11 +3,11 @@
 - name: Install prerequisites for PGDG apt repo
   ansible.builtin.apt:
     name:
-    - apt-transport-https
-    - ca-certificates
-    - curl
-    - gnupg
-    - lsb-release
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -81,22 +81,22 @@
   register: pg_data_initialized
 
 - name: Drop auto-created cluster in patroni mode
-  ansible.builtin.command: "pg_dropcluster --stop {{ postgresql_version }} main"
+  ansible.builtin.command: pg_dropcluster --stop {{ postgresql_version }} main
   when:
-  - postgresql_ha_mode == 'patroni'
-  - pg_data_initialized.stat.exists
+    - postgresql_ha_mode == 'patroni'
+    - pg_data_initialized.stat.exists
   changed_when: true
 
 # Standalone mode: if a non-default locale or ICU is requested AND the
 # package-created cluster has the wrong locale, recreate it. pg_createcluster
 # doesn't have an in-place locale change, so this is the only safe path.
 - name: Detect cluster locale (standalone, when overrides may matter)
-  ansible.builtin.command: "pg_lsclusters --no-header"
+  ansible.builtin.command: pg_lsclusters --no-header
   register: _pg_lsclusters
   changed_when: false
   when:
-  - postgresql_ha_mode == 'standalone'
-  - pg_data_initialized.stat.exists
+    - postgresql_ha_mode == 'standalone'
+    - pg_data_initialized.stat.exists
 
 # Note: ICU locale providers landed in PG 15. pg_createcluster on Debian 11
 # may be too old to forward --locale-provider/--icu-locale cleanly; the PGDG
@@ -118,8 +118,8 @@
   args:
     creates: "{{ postgresql_data_dir }}/PG_VERSION"
   when:
-  - postgresql_ha_mode == 'standalone'
-  - not pg_data_initialized.stat.exists
+    - postgresql_ha_mode == 'standalone'
+    - not pg_data_initialized.stat.exists
   register: pg_initdb_result
 
 - name: Write pg_createcluster output to install log
@@ -130,5 +130,5 @@
     group: root
     mode: "0644"
   when:
-  - postgresql_ha_mode == 'standalone'
-  - pg_initdb_result is changed
+    - postgresql_ha_mode == 'standalone'
+    - pg_initdb_result is changed

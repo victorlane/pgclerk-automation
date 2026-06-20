@@ -45,82 +45,82 @@
     # uses for replica rebuilds.  Override to add customer-specific
     # application_names.
     exclude_application_names:
-    - pgclerk
-    - Patroni
-    - pgbouncer
-    - Patroni Wal-E
-    - pg_basebackup
+      - pgclerk
+      - Patroni
+      - pgbouncer
+      - Patroni Wal-E
+      - pg_basebackup
   tasks:
-  - name: Refuse to run without an explicit --limit
-    ansible.builtin.assert:
-      that: ansible_limit is defined
-      fail_msg: >-
-        Refusing to run drop-connections against the entire inventory. Re-run
-        with --limit <customer_group_or_host>.
+    - name: Refuse to run without an explicit --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          Refusing to run drop-connections against the entire inventory. Re-run
+          with --limit <customer_group_or_host>.
 
-  - name: Assert required vars are defined
-    ansible.builtin.assert:
-      that:
-      - db_name is defined
-      - db_name | length > 0
-      fail_msg: "db_name must be provided (-e db_name=<name>)."
+    - name: Assert required vars are defined
+      ansible.builtin.assert:
+        that:
+          - db_name is defined
+          - db_name | length > 0
+        fail_msg: db_name must be provided (-e db_name=<name>).
 
-  - name: Compose match clause fragments
-    ansible.builtin.set_fact:
-      _user_clause: "{{ 'AND usename = %(user_name)s' if user_name is defined else '' }}"
-      _duration_clause: "{{ \"AND state_change < (now() - (%(min_state_duration)s)::interval)\" if min_state_duration is defined else '' }}"
+    - name: Compose match clause fragments
+      ansible.builtin.set_fact:
+        _user_clause: "{{ 'AND usename = %(user_name)s' if user_name is defined else '' }}"
+        _duration_clause: "{{ \"AND state_change < (now() - (%(min_state_duration)s)::interval)\" if min_state_duration is defined else '' }}"
 
-  - name: List matching sessions
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: >-
-        SELECT pid, datname, usename, application_name, client_addr, state,
-               state_change, backend_start, wait_event_type, wait_event
-        FROM pg_stat_activity
-        WHERE datname = %(db_name)s
-          AND pid <> pg_backend_pid()
-          AND COALESCE(application_name, '') <> ALL(%(exclude_application_names)s)
-          {{ _user_clause }}
-          {{ _duration_clause }}
-        ORDER BY backend_start
-      named_args:
-        db_name: "{{ db_name }}"
-        user_name: "{{ user_name | default(omit) }}"
-        min_state_duration: "{{ min_state_duration | default(omit) }}"
-        exclude_application_names: "{{ exclude_application_names }}"
-    register: _matching_sessions
+    - name: List matching sessions
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT pid, datname, usename, application_name, client_addr, state,
+                 state_change, backend_start, wait_event_type, wait_event
+          FROM pg_stat_activity
+          WHERE datname = %(db_name)s
+            AND pid <> pg_backend_pid()
+            AND COALESCE(application_name, '') <> ALL(%(exclude_application_names)s)
+            {{ _user_clause }}
+            {{ _duration_clause }}
+          ORDER BY backend_start
+        named_args:
+          db_name: "{{ db_name }}"
+          user_name: "{{ user_name | default(omit) }}"
+          min_state_duration: "{{ min_state_duration | default(omit) }}"
+          exclude_application_names: "{{ exclude_application_names }}"
+      register: _matching_sessions
 
-  - name: Show pre-flight list of sessions about to be terminated
-    ansible.builtin.debug:
-      msg:
-      - "Database:                  {{ db_name }}"
-      - "User filter:               {{ user_name | default('(all users)') }}"
-      - "Min state duration:        {{ min_state_duration | default('(any)') }}"
-      - "Excluded application_name: {{ exclude_application_names }}"
-      - "Matching sessions:         {{ _matching_sessions.rowcount }}"
+    - name: Show pre-flight list of sessions about to be terminated
+      ansible.builtin.debug:
+        msg:
+          - "Database:                  {{ db_name }}"
+          - "User filter:               {{ user_name | default('(all users)') }}"
+          - "Min state duration:        {{ min_state_duration | default('(any)') }}"
+          - "Excluded application_name: {{ exclude_application_names }}"
+          - "Matching sessions:         {{ _matching_sessions.rowcount }}"
 
-  - name: Show matching session detail
-    ansible.builtin.debug:
-      var: _matching_sessions.query_result
-    when: _matching_sessions.rowcount | int > 0
+    - name: Show matching session detail
+      ansible.builtin.debug:
+        var: _matching_sessions.query_result
+      when: _matching_sessions.rowcount | int > 0
 
-  - name: Terminate matching backends
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SELECT pg_terminate_backend(%(pid)s) AS terminated"
-      named_args:
-        pid: "{{ item.pid }}"
-    loop: "{{ _matching_sessions.query_result }}"
-    loop_control:
-      label: "pid={{ item.pid }} user={{ item.usename }} app={{ item.application_name }}"
-    register: _term_results
-    when: _matching_sessions.rowcount | int > 0
+    - name: Terminate matching backends
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SELECT pg_terminate_backend(%(pid)s) AS terminated
+        named_args:
+          pid: "{{ item.pid }}"
+      loop: "{{ _matching_sessions.query_result }}"
+      loop_control:
+        label: pid={{ item.pid }} user={{ item.usename }} app={{ item.application_name }}
+      register: _term_results
+      when: _matching_sessions.rowcount | int > 0
 
-  - name: Report termination summary
-    ansible.builtin.debug:
-      msg: >-
-        Requested termination of {{ _matching_sessions.rowcount }} session(s)
-        in {{ db_name }}. Note: pg_terminate_backend returns true on signal
-        delivery, not on session close -- re-run pg_stat_activity to confirm.
+    - name: Report termination summary
+      ansible.builtin.debug:
+        msg: >-
+          Requested termination of {{ _matching_sessions.rowcount }} session(s)
+          in {{ db_name }}. Note: pg_terminate_backend returns true on signal
+          delivery, not on session close -- re-run pg_stat_activity to confirm.

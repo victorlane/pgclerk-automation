@@ -2,8 +2,7 @@
 - name: Assert supported OS
   ansible.builtin.assert:
     that:
-    - ansible_facts['os_family'] in ['RedHat', 'Debian']
-      or ansible_facts['distribution'] == 'Amazon'
+      - ansible_facts['os_family'] in ['RedHat', 'Debian'] or ansible_facts['distribution'] == 'Amazon'
     fail_msg: >-
       The haproxy role supports RedHat, Debian, and Amazon Linux;
       got distribution='{{ ansible_facts['distribution'] }}',

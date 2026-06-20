@@ -1,6 +1,6 @@
 ---
 - name: Install pgBackRest package
-  ansible.builtin.include_tasks: "install-packages-{{ _pg_os_variant }}.yml"
+  ansible.builtin.include_tasks: install-packages-{{ _pg_os_variant }}.yml
 
 # On PG nodes the postgres user already exists (Patroni runs as it) and
 # attempting to mutate the user fails with `usermod: user postgres is
@@ -64,7 +64,7 @@
     mode: "0750"
   loop: "{{ pgbackrest_repos }}"
   when:
-  - _pgbr_is_backup_server
-  - item.type == 'server'
+    - _pgbr_is_backup_server
+    - item.type == 'server'
   loop_control:
     label: "{{ item.path | default(pgbackrest_repo_path) }}"

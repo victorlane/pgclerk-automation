@@ -7,17 +7,17 @@ postgresql_version: "18"
 # down the data directory; Patroni owns config, initdb, and the unit.
 postgresql_ha_mode: standalone
 
-postgresql_log_dirname: "pg_log"
+postgresql_log_dirname: pg_log
 
 # Locale configuration. libc provider with C.UTF-8 is portable across all
 # supported distros and avoids the ICU-version-skew foot-gun when restoring
 # a dump on a different host. Override per-customer when ICU is needed.
-postgresql_locale_provider: libc          # libc | icu
-postgresql_locale: "C.UTF-8"
-postgresql_icu_locale: "en-US"            # only consulted when provider=icu
+postgresql_locale_provider: libc # libc | icu
+postgresql_locale: C.UTF-8
+postgresql_icu_locale: en-US # only consulted when provider=icu
 
 postgresql_port: 5432
-postgresql_listen_addresses: "localhost"
+postgresql_listen_addresses: localhost
 postgresql_max_connections: 100
 
 # Auto-tuning is IMPERATIVE-ONLY -- never runs on a normal site.yml
@@ -46,7 +46,7 @@ postgresql_autotune: false
 #   mixed   - the safe middle ground. The default.
 #   dw      - few long analytical queries, batch jobs. Larger work_mem,
 #             bigger default_statistics_target, more parallelism.
-postgresql_workload_profile: mixed         # oltp | mixed | dw
+postgresql_workload_profile: mixed # oltp | mixed | dw
 
 # Storage class. Autotune discovers this from /sys/block (rotational +
 # NVMe presence) and from /proc/mounts (the data-dir mount); override only
@@ -57,7 +57,7 @@ postgresql_workload_profile: mixed         # oltp | mixed | dw
 #   ssd     - any non-rotational, non-NVMe block device. Network-attached SSD.
 #   hdd     - rotational block device.
 #   ""      - empty (default) = autodetect.
-postgresql_storage_class: ""               # "" (autodetect) | nvme | ssd | hdd
+postgresql_storage_class: "" # "" (autodetect) | nvme | ssd | hdd
 
 # Memory + tuning knobs. Leave any of these empty ("") to let auto-tuning
 # compute them; set a value to override.
@@ -145,12 +145,11 @@ postgresql_hot_standby_feedback: ""
 # Override with e.g.
 #   postgresql_experimental_enabled: [jit_above_cost, recovery_prefetch]
 postgresql_experimental_enabled: []
-
 # Only pg_stat_statements is universally useful for an MSP (query insight).
 # pgaudit, pgcrypto, citext etc. are workload-specific and should be added
 # per-customer via this var.
 postgresql_shared_preload_libraries:
-- pg_stat_statements
+  - pg_stat_statements
 
 # pgaudit (PostgreSQL Audit Extension). Off by default -- it ships with
 # PGDG (and the AL2023 native repo on PG 15/16) but the package is
@@ -165,18 +164,17 @@ postgresql_shared_preload_libraries:
 #   role  -- GRANT/REVOKE/CREATE ROLE
 #   write -- INSERT/UPDATE/DELETE/TRUNCATE
 postgresql_pgaudit_enabled: false
-postgresql_pgaudit_log: "ddl,role,write"
+postgresql_pgaudit_log: ddl,role,write
 postgresql_pgaudit_log_catalog: false
 
 postgresql_databases: []
 postgresql_users: []
 postgresql_locales: []
-
 postgresql_hba_entries:
-- { type: local, database: all, user: postgres, auth_method: peer }
-- { type: local, database: all, user: all, auth_method: peer }
-- { type: host, database: all, user: all, address: "127.0.0.1/32", auth_method: scram-sha-256 }
-- { type: host, database: all, user: all, address: "::1/128", auth_method: scram-sha-256 }
+  - { type: local, database: all, user: postgres, auth_method: peer }
+  - { type: local, database: all, user: all, auth_method: peer }
+  - { type: host, database: all, user: all, address: 127.0.0.1/32, auth_method: scram-sha-256 }
+  - { type: host, database: all, user: all, address: "::1/128", auth_method: scram-sha-256 }
 
 # Hardened template database. Off by default -- when true, the role
 # provisions postgresql_template_db with the REVOKE-on-public,
@@ -185,13 +183,13 @@ postgresql_hba_entries:
 #
 # This is an opinion, not a postgres install step. Turn it on per-customer.
 postgresql_apply_hardened_template: false
-postgresql_template_db: "template_hardened"
-postgresql_template_comment: "pgclerk hardened template"
+postgresql_template_db: template_hardened
+postgresql_template_comment: pgclerk hardened template
 postgresql_template_log_min_duration: 1000
 # Extensions installed into the hardened template (only consumed when
 # postgresql_apply_hardened_template is true). Customer-specific.
 postgresql_template_extensions:
-- pg_stat_statements
+  - pg_stat_statements
 
 # pgBouncer auth helper. When pgbouncer is in inventory (group
 # 'pgbouncer_servers' is non-empty) the postgresql role installs a

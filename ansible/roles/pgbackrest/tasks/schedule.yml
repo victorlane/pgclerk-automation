@@ -54,5 +54,5 @@
     enabled: true
     state: started
   loop:
-  - pgbackrest-backup-full.timer
-  - pgbackrest-backup-diff.timer
+    - pgbackrest-backup-full.timer
+    - pgbackrest-backup-diff.timer

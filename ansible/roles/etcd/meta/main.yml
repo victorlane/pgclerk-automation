@@ -6,11 +6,11 @@ galaxy_info:
   license: MIT
   min_ansible_version: "2.18"
   platforms:
-  - name: EL
-    versions: [ "8", "9" ]
+    - name: EL
+      versions: ["8", "9"]
   galaxy_tags:
-  - etcd
-  - dcs
-  - patroni
+    - etcd
+    - dcs
+    - patroni
 
 dependencies: []

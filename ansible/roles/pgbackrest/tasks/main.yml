@@ -2,8 +2,7 @@
 - name: Assert supported OS
   ansible.builtin.assert:
     that:
-    - ansible_facts['os_family'] in ['RedHat', 'Debian']
-      or ansible_facts['distribution'] == 'Amazon'
+      - ansible_facts['os_family'] in ['RedHat', 'Debian'] or ansible_facts['distribution'] == 'Amazon'
     fail_msg: >-
       The pgbackrest role supports RedHat, Debian, and Amazon Linux;
       got distribution='{{ ansible_facts['distribution'] }}',
@@ -42,14 +41,14 @@
 - name: Assert pgbackrest_repos is non-empty
   ansible.builtin.assert:
     that:
-    - pgbackrest_repos is sequence
-    - pgbackrest_repos | length > 0
+      - pgbackrest_repos is sequence
+      - pgbackrest_repos | length > 0
     fail_msg: "pgbackrest_repos must define at least one repo (type: server|s3)."
 
 - name: Assert every repo declares a supported type
   ansible.builtin.assert:
     that: item.type in ['server', 's3']
-    fail_msg: "pgbackrest repo {{ item }} has unsupported type; expected 'server' or 's3'."
+    fail_msg: pgbackrest repo {{ item }} has unsupported type; expected 'server' or 's3'.
   loop: "{{ pgbackrest_repos }}"
   loop_control:
     label: "{{ item.type | default('?') }}"
@@ -57,9 +56,9 @@
 - name: Validate server-type repos have a host
   ansible.builtin.assert:
     that:
-    - item.host is defined
-    - item.host | length > 0
-    fail_msg: "server-type pgbackrest repo must define 'host' (the backup server)."
+      - item.host is defined
+      - item.host | length > 0
+    fail_msg: server-type pgbackrest repo must define 'host' (the backup server).
   loop: "{{ pgbackrest_repos }}"
   when: item.type == 'server'
   loop_control:
@@ -68,10 +67,10 @@
 - name: Validate s3-type repos have endpoint/bucket/key/secret
   ansible.builtin.assert:
     that:
-    - item.endpoint is defined and item.endpoint | length > 0
-    - item.bucket is defined and item.bucket | length > 0
-    - item.key is defined and item.key | length > 0
-    - item.key_secret is defined and item.key_secret | length > 0
+      - item.endpoint is defined and item.endpoint | length > 0
+      - item.bucket is defined and item.bucket | length > 0
+      - item.key is defined and item.key | length > 0
+      - item.key_secret is defined and item.key_secret | length > 0
     fail_msg: >-
       s3-type pgbackrest repo must define endpoint, bucket, key and key_secret.
   loop: "{{ pgbackrest_repos }}"
@@ -89,8 +88,8 @@
 - name: Set up SSH trust between PG nodes and backup servers
   ansible.builtin.include_tasks: ssh-trust.yml
   when:
-  - pgbackrest_manage_ssh_trust | bool
-  - _pgbr_has_server_repo
+    - pgbackrest_manage_ssh_trust | bool
+    - _pgbr_has_server_repo
 
 - name: Render pgbackrest.conf and integrate with PostgreSQL
   ansible.builtin.include_tasks: configure.yml
@@ -104,5 +103,5 @@
 - name: Install scheduled backup units on the backup server
   ansible.builtin.include_tasks: schedule.yml
   when:
-  - _pgbr_is_backup_server
-  - pgbackrest_schedule | bool
+    - _pgbr_is_backup_server
+    - pgbackrest_schedule | bool

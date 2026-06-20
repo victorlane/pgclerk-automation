@@ -27,19 +27,18 @@
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Assert topology is defined
-    ansible.builtin.assert:
-      that:
-      - topology is defined
-      - topology in ['self-managed-vm-aws', 'self-managed-vm-gcp',
-                     'aws-rds', 'aws-aurora', 'cloudsql', 'alloydb']
-      fail_msg: "topology must be set to a known value."
+    - name: Assert topology is defined
+      ansible.builtin.assert:
+        that:
+          - topology is defined
+          - topology in ['self-managed-vm-aws', 'self-managed-vm-gcp', 'aws-rds', 'aws-aurora', 'cloudsql', 'alloydb']
+        fail_msg: topology must be set to a known value.
 
-  - name: Assert backup_type is supported (VM only)
-    when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
-    ansible.builtin.assert:
-      that: backup_type | default('incr') in ['full', 'diff', 'incr']
-      fail_msg: "backup_type must be one of: full, diff, incr"
+    - name: Assert backup_type is supported (VM only)
+      when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+      ansible.builtin.assert:
+        that: backup_type | default('incr') in ['full', 'diff', 'incr']
+        fail_msg: "backup_type must be one of: full, diff, incr"
 
 # ---------------------------------------------------------------------
 # Branch: self-managed VM (pgBackRest, existing)
@@ -53,27 +52,27 @@
     backup_type: incr
     backup_stanza: main
   tasks:
-  - name: Trigger pgBackRest backup
-    when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
-    block:
-    - name: Trigger {{ backup_type }} backup of stanza {{ backup_stanza }}
-      ansible.builtin.command: >
-        pgbackrest --stanza={{ backup_stanza }} --type={{ backup_type }} backup
-      register: _pgbr_backup
-      changed_when: true
+    - name: Trigger pgBackRest backup
+      when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+      block:
+        - name: Trigger {{ backup_type }} backup of stanza {{ backup_stanza }}
+          ansible.builtin.command: >
+            pgbackrest --stanza={{ backup_stanza }} --type={{ backup_type }} backup
+          register: _pgbr_backup
+          changed_when: true
 
-    - name: Show backup summary
-      ansible.builtin.debug:
-        var: _pgbr_backup.stdout_lines
+        - name: Show backup summary
+          ansible.builtin.debug:
+            var: _pgbr_backup.stdout_lines
 
-    - name: Show post-backup info
-      ansible.builtin.command: pgbackrest --stanza={{ backup_stanza }} info
-      register: _pgbr_info
-      changed_when: false
+        - name: Show post-backup info
+          ansible.builtin.command: pgbackrest --stanza={{ backup_stanza }} info
+          register: _pgbr_info
+          changed_when: false
 
-    - name: Display stanza info
-      ansible.builtin.debug:
-        var: _pgbr_info.stdout_lines
+        - name: Display stanza info
+          ansible.builtin.debug:
+            var: _pgbr_info.stdout_lines
 
 # ---------------------------------------------------------------------
 # Branch: managed (AWS / GCP) - all run on localhost
@@ -82,85 +81,85 @@
   hosts: localhost
   gather_facts: true
   tasks:
-  - name: Skip when topology is VM
-    when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
-    ansible.builtin.meta: end_play
+    - name: Skip when topology is VM
+      when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+      ansible.builtin.meta: end_play
 
-  - name: Assert managed vars
-    ansible.builtin.assert:
-      that:
-      - cloud_region is defined
-      - managed_instance_id is defined
-      fail_msg: "cloud_region and managed_instance_id are required for managed topologies."
+    - name: Assert managed vars
+      ansible.builtin.assert:
+        that:
+          - cloud_region is defined
+          - managed_instance_id is defined
+        fail_msg: cloud_region and managed_instance_id are required for managed topologies.
 
-  - name: Compose snapshot identifier
-    ansible.builtin.set_fact:
-      _mgd_snap_id: "{{ managed_instance_id }}-{{ ansible_date_time.iso8601_basic_short | regex_replace('[^0-9A-Za-z]', '') }}-pgclerk-ondemand"
+    - name: Compose snapshot identifier
+      ansible.builtin.set_fact:
+        _mgd_snap_id: "{{ managed_instance_id }}-{{ ansible_date_time.iso8601_basic_short | regex_replace('[^0-9A-Za-z]', '') }}-pgclerk-ondemand"
 
-  # ---- AWS RDS ---------------------------------------------------------
-  - name: Create RDS DB snapshot
-    when: topology == 'aws-rds'
-    amazon.aws.rds_instance_snapshot:
-      db_instance_identifier: "{{ managed_instance_id }}"
-      db_snapshot_identifier: "{{ _mgd_snap_id }}"
-      region: "{{ cloud_region }}"
-      state: present
-      wait: true
-    register: _rds_snap
+    # ---- AWS RDS ---------------------------------------------------------
+    - name: Create RDS DB snapshot
+      when: topology == 'aws-rds'
+      amazon.aws.rds_instance_snapshot:
+        db_instance_identifier: "{{ managed_instance_id }}"
+        db_snapshot_identifier: "{{ _mgd_snap_id }}"
+        region: "{{ cloud_region }}"
+        state: present
+        wait: true
+      register: _rds_snap
 
-  - name: Show RDS snapshot result
-    when: topology == 'aws-rds'
-    ansible.builtin.debug:
-      msg:
-      - "RDS snapshot created: {{ _mgd_snap_id }}"
-      - "ARN: {{ _rds_snap.db_snapshot_arn | default('n/a') }}"
+    - name: Show RDS snapshot result
+      when: topology == 'aws-rds'
+      ansible.builtin.debug:
+        msg:
+          - "RDS snapshot created: {{ _mgd_snap_id }}"
+          - "ARN: {{ _rds_snap.db_snapshot_arn | default('n/a') }}"
 
-  # ---- AWS Aurora ------------------------------------------------------
-  - name: Create Aurora cluster snapshot
-    when: topology == 'aws-aurora'
-    amazon.aws.rds_cluster_snapshot:
-      db_cluster_identifier: "{{ managed_instance_id }}"
-      db_cluster_snapshot_identifier: "{{ _mgd_snap_id }}"
-      region: "{{ cloud_region }}"
-      state: present
-      wait: true
-    register: _aurora_snap
+    # ---- AWS Aurora ------------------------------------------------------
+    - name: Create Aurora cluster snapshot
+      when: topology == 'aws-aurora'
+      amazon.aws.rds_cluster_snapshot:
+        db_cluster_identifier: "{{ managed_instance_id }}"
+        db_cluster_snapshot_identifier: "{{ _mgd_snap_id }}"
+        region: "{{ cloud_region }}"
+        state: present
+        wait: true
+      register: _aurora_snap
 
-  - name: Show Aurora snapshot result
-    when: topology == 'aws-aurora'
-    ansible.builtin.debug:
-      msg:
-      - "Aurora cluster snapshot created: {{ _mgd_snap_id }}"
-      - "ARN: {{ _aurora_snap.db_cluster_snapshot_arn | default('n/a') }}"
+    - name: Show Aurora snapshot result
+      when: topology == 'aws-aurora'
+      ansible.builtin.debug:
+        msg:
+          - "Aurora cluster snapshot created: {{ _mgd_snap_id }}"
+          - "ARN: {{ _aurora_snap.db_cluster_snapshot_arn | default('n/a') }}"
 
-  # ---- CloudSQL --------------------------------------------------------
-  - name: Trigger CloudSQL on-demand backup
-    when: topology == 'cloudsql'
-    ansible.builtin.command: >-
-      gcloud sql backups create
-        --project {{ cloud_project }}
-        --instance {{ managed_instance_id }}
-        --description {{ ('pgclerk-ondemand-' + ansible_date_time.iso8601_basic_short) | quote }}
-    register: _cs_backup
-    changed_when: _cs_backup.rc == 0
+    # ---- CloudSQL --------------------------------------------------------
+    - name: Trigger CloudSQL on-demand backup
+      when: topology == 'cloudsql'
+      ansible.builtin.command: >-
+        gcloud sql backups create
+          --project {{ cloud_project }}
+          --instance {{ managed_instance_id }}
+          --description {{ ('pgclerk-ondemand-' + ansible_date_time.iso8601_basic_short) | quote }}
+      register: _cs_backup
+      changed_when: _cs_backup.rc == 0
 
-  - name: Show CloudSQL backup result
-    when: topology == 'cloudsql'
-    ansible.builtin.debug:
-      var: _cs_backup.stdout_lines
+    - name: Show CloudSQL backup result
+      when: topology == 'cloudsql'
+      ansible.builtin.debug:
+        var: _cs_backup.stdout_lines
 
-  # ---- AlloyDB ---------------------------------------------------------
-  - name: Trigger AlloyDB cluster backup
-    when: topology == 'alloydb'
-    ansible.builtin.command: >-
-      gcloud alloydb backups create {{ _mgd_snap_id }}
-        --project {{ cloud_project }}
-        --region {{ cloud_region }}
-        --cluster {{ managed_instance_id }}
-    register: _alloydb_backup
-    changed_when: _alloydb_backup.rc == 0
+    # ---- AlloyDB ---------------------------------------------------------
+    - name: Trigger AlloyDB cluster backup
+      when: topology == 'alloydb'
+      ansible.builtin.command: >-
+        gcloud alloydb backups create {{ _mgd_snap_id }}
+          --project {{ cloud_project }}
+          --region {{ cloud_region }}
+          --cluster {{ managed_instance_id }}
+      register: _alloydb_backup
+      changed_when: _alloydb_backup.rc == 0
 
-  - name: Show AlloyDB backup result
-    when: topology == 'alloydb'
-    ansible.builtin.debug:
-      var: _alloydb_backup.stdout_lines
+    - name: Show AlloyDB backup result
+      when: topology == 'alloydb'
+      ansible.builtin.debug:
+        var: _alloydb_backup.stdout_lines

@@ -3,5 +3,4 @@
 # tarball into /opt/postgres_exporter-<ver>/ and symlink the binary into
 # /usr/local/bin. No package list to install.
 postgres_exporter_packages: []
-
 postgres_exporter_package_bin: "{{ postgres_exporter_bin_path }}"

@@ -20,14 +20,8 @@
 - name: Resolve pgaudit package name for this OS variant
   ansible.builtin.set_fact:
     _pg_pgaudit_pkg: >-
-      {%- if _pg_os_variant == 'RedHat' -%}
-      pgaudit{{ postgresql_version }}_{{ postgresql_version }}
-      {%- elif _pg_os_variant == 'Debian' -%}
-      postgresql-{{ postgresql_version }}-pgaudit
-      {%- elif _pg_os_variant == 'Amazon' -%}
-      pgaudit
-      {%- else -%}
-      {%- endif -%}
+      {%- if _pg_os_variant == 'RedHat' -%} pgaudit{{ postgresql_version }}_{{ postgresql_version }}{%- elif _pg_os_variant == 'Debian' -%} postgresql-{{ postgresql_version
+      }}-pgaudit{%- elif _pg_os_variant == 'Amazon' -%} pgaudit{%- else -%} {%- endif -%}
 
 # --- RHEL / Rocky / Alma -------------------------------------------------
 - name: Install pgaudit (RHEL family, PGDG)
@@ -53,27 +47,27 @@
 - name: Check pgaudit availability on Amazon Linux 2023
   when: _pg_os_variant == 'Amazon'
   ansible.builtin.command:
-    cmd: "dnf -q list available pgaudit"
+    cmd: dnf -q list available pgaudit
   register: _pg_pgaudit_avail
   changed_when: false
   failed_when: false
 
 - name: Notify when pgaudit is not packaged on AL2023
   when:
-  - _pg_os_variant == 'Amazon'
-  - _pg_pgaudit_avail.rc != 0
+    - _pg_os_variant == 'Amazon'
+    - _pg_pgaudit_avail.rc != 0
   ansible.builtin.debug:
     msg:
-    - "pgaudit is not available in the AL2023 dnf repositories visible to"
-    - "this host. Skipping pgaudit install. The role will NOT add pgaudit"
-    - "to shared_preload_libraries -- you can build pgaudit from source"
-    - "and re-run with postgresql_pgaudit_enabled=true once the package"
-    - "is installed by other means, or fall back to a RHEL-family host."
+      - pgaudit is not available in the AL2023 dnf repositories visible to
+      - this host. Skipping pgaudit install. The role will NOT add pgaudit
+      - to shared_preload_libraries -- you can build pgaudit from source
+      - and re-run with postgresql_pgaudit_enabled=true once the package
+      - is installed by other means, or fall back to a RHEL-family host.
 
 - name: Install pgaudit (Amazon Linux 2023, native dnf)
   when:
-  - _pg_os_variant == 'Amazon'
-  - _pg_pgaudit_avail.rc == 0
+    - _pg_os_variant == 'Amazon'
+    - _pg_pgaudit_avail.rc == 0
   ansible.builtin.dnf:
     name: "{{ _pg_pgaudit_pkg }}"
     state: present
@@ -84,7 +78,7 @@
 # start. The operator sees the debug above; the cluster keeps running.
 - name: Disable pgaudit conf rendering when install was skipped (AL2023)
   when:
-  - _pg_os_variant == 'Amazon'
-  - _pg_pgaudit_avail.rc != 0
+    - _pg_os_variant == 'Amazon'
+    - _pg_pgaudit_avail.rc != 0
   ansible.builtin.set_fact:
     postgresql_pgaudit_enabled: false

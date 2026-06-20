@@ -1,15 +1,15 @@
 ---
-etcd_version: "3.5.16"
+etcd_version: 3.5.16
 etcd_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}"
 
 # Inventory group whose members form the etcd cluster. The playbook decides
 # whether this is the postgres group (embedded DCS) or a dedicated etcd group
 # (external DCS); the role itself does not care.
-etcd_inventory_group: "postgres_servers"
+etcd_inventory_group: postgres_servers
 
-etcd_install_dir: "/opt/etcd-{{ etcd_version }}"
-etcd_data_dir: "/var/lib/etcd"
-etcd_config_dir: "/etc/etcd"
+etcd_install_dir: /opt/etcd-{{ etcd_version }}
+etcd_data_dir: /var/lib/etcd
+etcd_config_dir: /etc/etcd
 
 # Block device to dedicate to etcd_data_dir.  When set (e.g. "/dev/sdg" or
 # "/dev/nvme1n1"), the role:
@@ -25,8 +25,8 @@ etcd_config_dir: "/etc/etcd"
 # disk as PG WAL writes flap the etcd leader under DB load.  Production
 # embedded-etcd deployments should give etcd its own filesystem.
 etcd_data_device: ""
-etcd_data_fstype: "xfs"
-etcd_data_mount_options: "noatime,nodiratime"
+etcd_data_fstype: xfs
+etcd_data_mount_options: noatime,nodiratime
 
 etcd_user: etcd
 etcd_group: etcd
@@ -72,8 +72,8 @@ etcd_tls_ca_days: 3650
 etcd_tls_cert_days: 825
 
 # Common Name + Organisation on the generated CA.
-etcd_tls_ca_common_name: "pgclerk etcd CA ({{ etcd_cluster_token }})"
-etcd_tls_ca_organisation: "pgclerk"
+etcd_tls_ca_common_name: pgclerk etcd CA ({{ etcd_cluster_token }})
+etcd_tls_ca_organisation: pgclerk
 
 # Break-glass: skip TLS verification on the etcd client side (Patroni).
 # Useful for dev when the CA cannot be distributed. NEVER set in production.

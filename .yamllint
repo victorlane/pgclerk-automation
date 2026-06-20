@@ -1,0 +1,23 @@
+---
+# yamllint config consumed by ansible-lint. Mirrors ansible-lint's
+# bundled .yamllint exactly except for line-length, which we raise
+# from 160 to 200. The resolver lines in
+# roles/postgresql/tasks/configure.yml are intentionally long --
+# each is a single `_pg_<knob>: "{{ postgresql_<knob> | default(...) }}"`
+# pair where wrapping costs more readability than it saves.
+
+extends: default
+
+rules:
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  document-start: disable
+  line-length:
+    max: 200
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true

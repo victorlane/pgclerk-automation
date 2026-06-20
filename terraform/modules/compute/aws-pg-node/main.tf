@@ -161,14 +161,14 @@ resource "aws_instance" "this" {
   }
 
   ebs_block_device {
-    device_name           = "/dev/sdf"
-    volume_size           = var.data_volume_gib
-    volume_type           = var.disk_type
+    device_name = "/dev/sdf"
+    volume_size = var.data_volume_gib
+    volume_type = var.disk_type
     # iops + throughput are only meaningful on gp3/io1/io2. Passing 0
     # on a volume type that rejects them would fail validation; we
     # null out the field so AWS uses the type's default.
-    iops       = var.disk_iops > 0 ? var.disk_iops : null
-    throughput = var.disk_throughput_mbps > 0 && var.disk_type == "gp3" ? var.disk_throughput_mbps : null
+    iops                  = var.disk_iops > 0 ? var.disk_iops : null
+    throughput            = var.disk_throughput_mbps > 0 && var.disk_type == "gp3" ? var.disk_throughput_mbps : null
     delete_on_termination = true
   }
 

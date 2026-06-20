@@ -43,52 +43,52 @@
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Assert source paths are defined
-    ansible.builtin.assert:
-      that:
-      - cert_pem_path is defined
-      - cert_pem_path | length > 0
-      - cert_key_pem_path is defined
-      - cert_key_pem_path | length > 0
-      fail_msg: >-
-        cert_pem_path and cert_key_pem_path are required.
-        Point them at PEM files on the control node.
+    - name: Assert source paths are defined
+      ansible.builtin.assert:
+        that:
+          - cert_pem_path is defined
+          - cert_pem_path | length > 0
+          - cert_key_pem_path is defined
+          - cert_key_pem_path | length > 0
+        fail_msg: >-
+          cert_pem_path and cert_key_pem_path are required.
+          Point them at PEM files on the control node.
 
-  - name: Stat the source cert file
-    ansible.builtin.stat:
-      path: "{{ cert_pem_path }}"
-    register: _cr_src_cert
+    - name: Stat the source cert file
+      ansible.builtin.stat:
+        path: "{{ cert_pem_path }}"
+      register: _cr_src_cert
 
-  - name: Stat the source key file
-    ansible.builtin.stat:
-      path: "{{ cert_key_pem_path }}"
-    register: _cr_src_key
+    - name: Stat the source key file
+      ansible.builtin.stat:
+        path: "{{ cert_key_pem_path }}"
+      register: _cr_src_key
 
-  - name: Assert source files exist + are non-empty
-    ansible.builtin.assert:
-      that:
-      - _cr_src_cert.stat.exists
-      - _cr_src_cert.stat.size > 0
-      - _cr_src_key.stat.exists
-      - _cr_src_key.stat.size > 0
-      fail_msg: >-
-        Cert / key file missing or empty.
-        cert_pem_path={{ cert_pem_path }}
-        cert_key_pem_path={{ cert_key_pem_path }}
+    - name: Assert source files exist + are non-empty
+      ansible.builtin.assert:
+        that:
+          - _cr_src_cert.stat.exists
+          - _cr_src_cert.stat.size > 0
+          - _cr_src_key.stat.exists
+          - _cr_src_key.stat.size > 0
+        fail_msg: >-
+          Cert / key file missing or empty.
+          cert_pem_path={{ cert_pem_path }}
+          cert_key_pem_path={{ cert_key_pem_path }}
 
-  - name: Stat the source CA file (when provided)
-    when: cert_ca_path is defined and (cert_ca_path | length) > 0
-    ansible.builtin.stat:
-      path: "{{ cert_ca_path }}"
-    register: _cr_src_ca
+    - name: Stat the source CA file (when provided)
+      when: cert_ca_path is defined and (cert_ca_path | length) > 0
+      ansible.builtin.stat:
+        path: "{{ cert_ca_path }}"
+      register: _cr_src_ca
 
-  - name: Assert CA bundle exists when provided
-    when: cert_ca_path is defined and (cert_ca_path | length) > 0
-    ansible.builtin.assert:
-      that:
-      - _cr_src_ca.stat.exists
-      - _cr_src_ca.stat.size > 0
-      fail_msg: "cert_ca_path provided but {{ cert_ca_path }} is missing or empty."
+    - name: Assert CA bundle exists when provided
+      when: cert_ca_path is defined and (cert_ca_path | length) > 0
+      ansible.builtin.assert:
+        that:
+          - _cr_src_ca.stat.exists
+          - _cr_src_ca.stat.size > 0
+        fail_msg: cert_ca_path provided but {{ cert_ca_path }} is missing or empty.
 
 - name: Push certificate material to every PG node
   hosts: postgres_servers
@@ -100,170 +100,169 @@
     cert_dest_key_name: server.key
     cert_dest_ca_name: root.crt
   tasks:
-  - name: Resolve OS variant + per-OS PG paths
-    ansible.builtin.set_fact:
-      _cr_os_variant: >-
-        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
-           else ansible_facts['os_family'] }}
+    - name: Resolve OS variant + per-OS PG paths
+      ansible.builtin.set_fact:
+        _cr_os_variant: >-
+          {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+             else ansible_facts['os_family'] }}
 
-  - name: Load postgresql OS-specific variables
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _cr_os_variant }}.yml"
-      name: _cr_pg_vars
+    - name: Load postgresql OS-specific variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _cr_os_variant }}.yml"
+        name: _cr_pg_vars
 
-  - name: Read current postgresql.conf for ssl setting
-    ansible.builtin.command:
-      cmd: "grep -E '^[[:space:]]*ssl[[:space:]]*=' {{ _cr_pg_vars.postgresql_conf_path }}"
-    register: _cr_ssl_grep
-    changed_when: false
-    failed_when: false
+    - name: Read current postgresql.conf for ssl setting
+      ansible.builtin.command:
+        cmd: grep -E '^[[:space:]]*ssl[[:space:]]*=' {{ _cr_pg_vars.postgresql_conf_path }}
+      register: _cr_ssl_grep
+      changed_when: false
+      failed_when: false
 
-  - name: Determine if ssl is already on
-    ansible.builtin.set_fact:
-      _cr_ssl_already_on: >-
-        {{ (_cr_ssl_grep.stdout | regex_search('=\\s*on', ignorecase=True)) is not none }}
+    - name: Determine if ssl is already on
+      ansible.builtin.set_fact:
+        _cr_ssl_already_on: >-
+          {{ (_cr_ssl_grep.stdout | regex_search('=\\s*on', ignorecase=True)) is not none }}
 
-  - name: Refuse Patroni-mode conf edits when ssl is off
-    when:
-    - (postgresql_ha_mode | default('standalone')) == 'patroni'
-    - not _cr_ssl_already_on
-    ansible.builtin.assert:
-      that: false
-      fail_msg: |
-        postgresql.conf has ssl != on, and this cluster runs in Patroni mode.
-        Refusing to edit postgresql.conf directly -- Patroni owns it. Add the
-        following to patroni.yml under bootstrap.dcs.postgresql.parameters
-        (and to the cluster's `patronictl edit-config`), re-apply the patroni
-        role, then re-run this playbook:
+    - name: Refuse Patroni-mode conf edits when ssl is off
+      when:
+        - (postgresql_ha_mode | default('standalone')) == 'patroni'
+        - not _cr_ssl_already_on
+      ansible.builtin.assert:
+        that: false
+        fail_msg: |
+          postgresql.conf has ssl != on, and this cluster runs in Patroni mode.
+          Refusing to edit postgresql.conf directly -- Patroni owns it. Add the
+          following to patroni.yml under bootstrap.dcs.postgresql.parameters
+          (and to the cluster's `patronictl edit-config`), re-apply the patroni
+          role, then re-run this playbook:
 
-            bootstrap:
-              dcs:
-                postgresql:
-                  parameters:
-                    ssl: 'on'
-                    ssl_cert_file: '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_cert_name }}'
-                    ssl_key_file:  '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_key_name }}'
-                    ssl_ca_file:   '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_ca_name }}'
+              bootstrap:
+                dcs:
+                  postgresql:
+                    parameters:
+                      ssl: 'on'
+                      ssl_cert_file: '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_cert_name }}'
+                      ssl_key_file:  '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_key_name }}'
+                      ssl_ca_file:   '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_ca_name }}'
 
-  - name: Copy CA bundle (when provided)
-    when: cert_ca_path is defined and (cert_ca_path | length) > 0
-    ansible.builtin.copy:
-      src: "{{ cert_ca_path }}"
-      dest: "{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_ca_name }}"
-      owner: postgres
-      group: postgres
-      mode: "0644"
+    - name: Copy CA bundle (when provided)
+      when: cert_ca_path is defined and (cert_ca_path | length) > 0
+      ansible.builtin.copy:
+        src: "{{ cert_ca_path }}"
+        dest: "{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_ca_name }}"
+        owner: postgres
+        group: postgres
+        mode: "0644"
 
-  - name: Copy server certificate
-    ansible.builtin.copy:
-      src: "{{ cert_pem_path }}"
-      dest: "{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_cert_name }}"
-      owner: postgres
-      group: postgres
-      mode: "0644"
+    - name: Copy server certificate
+      ansible.builtin.copy:
+        src: "{{ cert_pem_path }}"
+        dest: "{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_cert_name }}"
+        owner: postgres
+        group: postgres
+        mode: "0644"
 
-  - name: Copy server private key
-    ansible.builtin.copy:
-      src: "{{ cert_key_pem_path }}"
-      dest: "{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_key_name }}"
-      owner: postgres
-      group: postgres
-      mode: "0600"
+    - name: Copy server private key
+      ansible.builtin.copy:
+        src: "{{ cert_key_pem_path }}"
+        dest: "{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_key_name }}"
+        owner: postgres
+        group: postgres
+        mode: "0600"
 
-  # --- Standalone-only conf edit (Patroni was refused above) -------------
+    # --- Standalone-only conf edit (Patroni was refused above) -------------
 
-  - name: Enable ssl in postgresql.conf (standalone only, when not already on)
-    when:
-    - (postgresql_ha_mode | default('standalone')) == 'standalone'
-    - not _cr_ssl_already_on
-    ansible.builtin.lineinfile:
-      path: "{{ _cr_pg_vars.postgresql_conf_path }}"
-      regexp: "^[[:space:]]*ssl[[:space:]]*="
-      line: "ssl = on"
-      owner: postgres
-      group: postgres
-      mode: "0600"
-      create: false
+    - name: Enable ssl in postgresql.conf (standalone only, when not already on)
+      when:
+        - (postgresql_ha_mode | default('standalone')) == 'standalone'
+        - not _cr_ssl_already_on
+      ansible.builtin.lineinfile:
+        path: "{{ _cr_pg_vars.postgresql_conf_path }}"
+        regexp: ^[[:space:]]*ssl[[:space:]]*=
+        line: ssl = on
+        owner: postgres
+        group: postgres
+        mode: "0600"
+        create: false
 
-  - name: Set ssl_cert_file in postgresql.conf (standalone only)
-    when: (postgresql_ha_mode | default('standalone')) == 'standalone'
-    ansible.builtin.lineinfile:
-      path: "{{ _cr_pg_vars.postgresql_conf_path }}"
-      regexp: "^[[:space:]]*ssl_cert_file[[:space:]]*="
-      line: "ssl_cert_file = '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_cert_name }}'"
-      owner: postgres
-      group: postgres
-      mode: "0600"
+    - name: Set ssl_cert_file in postgresql.conf (standalone only)
+      when: (postgresql_ha_mode | default('standalone')) == 'standalone'
+      ansible.builtin.lineinfile:
+        path: "{{ _cr_pg_vars.postgresql_conf_path }}"
+        regexp: ^[[:space:]]*ssl_cert_file[[:space:]]*=
+        line: ssl_cert_file = '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_cert_name }}'
+        owner: postgres
+        group: postgres
+        mode: "0600"
 
-  - name: Set ssl_key_file in postgresql.conf (standalone only)
-    when: (postgresql_ha_mode | default('standalone')) == 'standalone'
-    ansible.builtin.lineinfile:
-      path: "{{ _cr_pg_vars.postgresql_conf_path }}"
-      regexp: "^[[:space:]]*ssl_key_file[[:space:]]*="
-      line: "ssl_key_file = '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_key_name }}'"
-      owner: postgres
-      group: postgres
-      mode: "0600"
+    - name: Set ssl_key_file in postgresql.conf (standalone only)
+      when: (postgresql_ha_mode | default('standalone')) == 'standalone'
+      ansible.builtin.lineinfile:
+        path: "{{ _cr_pg_vars.postgresql_conf_path }}"
+        regexp: ^[[:space:]]*ssl_key_file[[:space:]]*=
+        line: ssl_key_file = '{{ _cr_pg_vars.postgresql_data_dir }}/{{ cert_dest_key_name }}'
+        owner: postgres
+        group: postgres
+        mode: "0600"
 
-  # --- Reload (SIGHUP) path ----------------------------------------------
+    # --- Reload (SIGHUP) path ----------------------------------------------
 
-  - name: SIGHUP postgres to pick up new cert (reload-only path)
-    when: cert_reload_only | bool
-    become: true
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SELECT pg_reload_conf()"
-    register: _cr_reload
-    changed_when: true
+    - name: SIGHUP postgres to pick up new cert (reload-only path)
+      when: cert_reload_only | bool
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SELECT pg_reload_conf()
+      register: _cr_reload
+      changed_when: true
 
-  # --- Rolling-restart path: replicas first ------------------------------
+    # --- Rolling-restart path: replicas first ------------------------------
 
-  - name: Rolling restart -- replicas first
-    when:
-    - not (cert_reload_only | bool)
-    - (postgresql_ha_mode | default('standalone')) == 'patroni'
-    - inventory_hostname in (groups['postgres_replicas'] | default([]))
-    ansible.builtin.systemd:
-      name: patroni.service
-      state: restarted
+    - name: Rolling restart -- replicas first
+      when:
+        - not (cert_reload_only | bool)
+        - (postgresql_ha_mode | default('standalone')) == 'patroni'
+        - inventory_hostname in (groups['postgres_replicas'] | default([]))
+      ansible.builtin.systemd:
+        name: patroni.service
+        state: restarted
 
-  # --- Verify ssl_cert_file matches what we just wrote --------------------
+    # --- Verify ssl_cert_file matches what we just wrote --------------------
 
-  - name: Verify ssl_cert_file is what we just wrote
-    become: true
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SHOW ssl_cert_file"
-    register: _cr_show_cert
-    failed_when: false
+    - name: Verify ssl_cert_file is what we just wrote
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SHOW ssl_cert_file
+      register: _cr_show_cert
+      failed_when: false
 
-  - name: Assert ssl_cert_file is the expected file
-    ansible.builtin.assert:
-      that:
-      - (_cr_show_cert.query_result | default([])) | length > 0
-      - (_cr_show_cert.query_result | first).ssl_cert_file
-        | regex_search(cert_dest_cert_name)
-      fail_msg: >-
-        SHOW ssl_cert_file returned
-        '{{ (_cr_show_cert.query_result | default([{}])) | first }}',
-        which does not match the file we just wrote
-        ({{ cert_dest_cert_name }}). The reload may not have taken.
+    - name: Assert ssl_cert_file is the expected file
+      ansible.builtin.assert:
+        that:
+          - (_cr_show_cert.query_result | default([])) | length > 0
+          - (_cr_show_cert.query_result | first).ssl_cert_file | regex_search(cert_dest_cert_name)
+        fail_msg: >-
+          SHOW ssl_cert_file returned
+          '{{ (_cr_show_cert.query_result | default([{}])) | first }}',
+          which does not match the file we just wrote
+          ({{ cert_dest_cert_name }}). The reload may not have taken.
 
-  - name: Fresh SSL handshake via psql \conninfo (best-effort)
-    become: true
-    become_user: postgres
-    ansible.builtin.shell: |
-      psql "host=127.0.0.1 port={{ postgresql_port | default(5432) }} sslmode=require dbname=postgres" \
-        -At -c "\conninfo"
-    register: _cr_conninfo
-    changed_when: false
-    failed_when: false
+    - name: Fresh SSL handshake via psql \conninfo (best-effort)
+      become: true
+      become_user: postgres
+      ansible.builtin.shell: |
+        psql "host=127.0.0.1 port={{ postgresql_port | default(5432) }} sslmode=require dbname=postgres" \
+          -At -c "\conninfo"
+      register: _cr_conninfo
+      changed_when: false
+      failed_when: false
 
-  - name: Surface conninfo output
-    ansible.builtin.debug:
-      var: _cr_conninfo.stdout_lines
+    - name: Surface conninfo output
+      ansible.builtin.debug:
+        var: _cr_conninfo.stdout_lines
 
 # --- Patroni rolling restart: leader last, after switchover --------------
 
@@ -272,81 +271,80 @@
   become: true
   gather_facts: false
   tasks:
-  - name: Skip when reload_only or standalone
-    when:
-    - (cert_reload_only | default(true) | bool)
-      or (postgresql_ha_mode | default('standalone')) != 'patroni'
-    ansible.builtin.meta: end_play
+    - name: Skip when reload_only or standalone
+      when:
+        - (cert_reload_only | default(true) | bool) or (postgresql_ha_mode | default('standalone')) != 'patroni'
+      ansible.builtin.meta: end_play
 
-  - name: Capture current cluster view
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
-    register: _cr_list
-    changed_when: false
+    - name: Capture current cluster view
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+      register: _cr_list
+      changed_when: false
 
-  - name: Identify a healthy replica to switch over to
-    ansible.builtin.set_fact:
-      _cr_target: >-
-        {{ (_cr_list.stdout | from_json
-            | selectattr('Role', 'in', ['Replica'])
-            | selectattr('State', 'in', ['streaming', 'running'])
-            | list | first | default({})).Member | default('') }}
+    - name: Identify a healthy replica to switch over to
+      ansible.builtin.set_fact:
+        _cr_target: >-
+          {{ (_cr_list.stdout | from_json
+              | selectattr('Role', 'in', ['Replica'])
+              | selectattr('State', 'in', ['streaming', 'running'])
+              | list | first | default({})).Member | default('') }}
 
-  - name: Refuse rolling restart when no healthy replica exists
-    ansible.builtin.assert:
-      that: _cr_target | length > 0
-      fail_msg: >-
-        Rolling restart requires at least one streaming replica to switch
-        over to. None found. Re-run with cert_reload_only=true or fix the
-        cluster first.
+    - name: Refuse rolling restart when no healthy replica exists
+      ansible.builtin.assert:
+        that: _cr_target | length > 0
+        fail_msg: >-
+          Rolling restart requires at least one streaming replica to switch
+          over to. None found. Re-run with cert_reload_only=true or fix the
+          cluster first.
 
-  - name: Switch over to the freshly-restarted replica
-    ansible.builtin.command:
-      argv:
-      - /usr/local/bin/patronictl
-      - -c
-      - /etc/patroni/patroni.yml
-      - switchover
-      - "{{ patroni_scope | default('pgclerk') }}"
-      - --candidate
-      - "{{ _cr_target }}"
-      - --force
-    register: _cr_switchover
-    changed_when: true
+    - name: Switch over to the freshly-restarted replica
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/patronictl
+          - -c
+          - /etc/patroni/patroni.yml
+          - switchover
+          - "{{ patroni_scope | default('pgclerk') }}"
+          - --candidate
+          - "{{ _cr_target }}"
+          - --force
+      register: _cr_switchover
+      changed_when: true
 
-  - name: Restart patroni on the former leader (now a replica)
-    ansible.builtin.systemd:
-      name: patroni.service
-      state: restarted
+    - name: Restart patroni on the former leader (now a replica)
+      ansible.builtin.systemd:
+        name: patroni.service
+        state: restarted
 
-  - name: Final cluster view
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
-    register: _cr_final
-    changed_when: false
+    - name: Final cluster view
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
+      register: _cr_final
+      changed_when: false
 
-  - name: Surface certificate-rotate verdict
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "TLS material rotated"
-      - "  Mode             : rolling restart (Patroni)"
-      - "  New leader       : {{ _cr_target }}"
-      - "  Topology after   :"
-      - "{{ _cr_final.stdout }}"
-      - "########################################################################"
+    - name: Surface certificate-rotate verdict
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - TLS material rotated
+          - "  Mode             : rolling restart (Patroni)"
+          - "  New leader       : {{ _cr_target }}"
+          - "  Topology after   :"
+          - "{{ _cr_final.stdout }}"
+          - "########################################################################"
 
 - name: Standalone / reload-only verdict
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Surface reload-only verdict
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "TLS material rotated"
-      - "  Mode             : reload (SIGHUP) -- no connection drop"
-      - "  Verify on each PG host:"
-      - "    sudo -u postgres psql -c \"SHOW ssl_cert_file;\""
-      - "    sudo -u postgres psql 'sslmode=require' -c \"\\conninfo\""
-      - "########################################################################"
+    - name: Surface reload-only verdict
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - TLS material rotated
+          - "  Mode             : reload (SIGHUP) -- no connection drop"
+          - "  Verify on each PG host:"
+          - '    sudo -u postgres psql -c "SHOW ssl_cert_file;"'
+          - "    sudo -u postgres psql 'sslmode=require' -c \"\\conninfo\""
+          - "########################################################################"

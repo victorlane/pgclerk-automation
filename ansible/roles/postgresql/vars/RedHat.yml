@@ -5,16 +5,16 @@
 # the role doesn't need a systemd drop-in.
 
 postgresql_packages:
-- "postgresql{{ postgresql_version }}-server"
-- "postgresql{{ postgresql_version }}"
-- "postgresql{{ postgresql_version }}-contrib"
-- "python3-psycopg2"
+  - postgresql{{ postgresql_version }}-server
+  - postgresql{{ postgresql_version }}
+  - postgresql{{ postgresql_version }}-contrib
+  - python3-psycopg2
 
-postgresql_service: "postgresql-{{ postgresql_version }}"
-postgresql_data_dir: "/var/lib/pgsql/{{ postgresql_version }}/data"
+postgresql_service: postgresql-{{ postgresql_version }}
+postgresql_data_dir: /var/lib/pgsql/{{ postgresql_version }}/data
 postgresql_config_dir: "{{ postgresql_data_dir }}"
 postgresql_conf_path: "{{ postgresql_data_dir }}/postgresql.conf"
 postgresql_hba_path: "{{ postgresql_data_dir }}/pg_hba.conf"
-postgresql_install_log: "/var/log/postgresql_{{ postgresql_version }}_install_{{ ansible_hostname }}_{{ ansible_date_time.date | replace('-', '') }}.log"
+postgresql_install_log: /var/log/postgresql_{{ postgresql_version }}_install_{{ ansible_hostname }}_{{ ansible_date_time.date | replace('-', '') }}.log
 postgresql_log_dir: "{{ postgresql_data_dir }}/{{ postgresql_log_dirname }}"
-postgresql_bin_path: "/usr/pgsql-{{ postgresql_version }}/bin"
+postgresql_bin_path: /usr/pgsql-{{ postgresql_version }}/bin

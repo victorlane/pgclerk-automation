@@ -10,7 +10,7 @@
 - name: Ensure python3-venv and python3-pip are installed
   ansible.builtin.apt:
     name:
-    - python3-venv
-    - python3-pip
-    - python3-setuptools
+      - python3-venv
+      - python3-pip
+      - python3-setuptools
     state: present

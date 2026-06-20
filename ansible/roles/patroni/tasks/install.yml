@@ -2,7 +2,7 @@
 # Per-OS step: pip + venv tooling. The venv itself is built the same way
 # on every family, so only the package install differs.
 - name: Install Python tooling for the Patroni venv
-  ansible.builtin.include_tasks: "install-packages-{{ _pg_os_variant }}.yml"
+  ansible.builtin.include_tasks: install-packages-{{ _pg_os_variant }}.yml
 
 - name: Create Patroni virtualenv parent directory
   ansible.builtin.file:
@@ -23,8 +23,8 @@
 - name: Install Patroni into a dedicated virtualenv
   ansible.builtin.pip:
     name:
-    - "patroni[etcd3]=={{ patroni_version }}"
-    - "psycopg2-binary"
+      - patroni[etcd3]=={{ patroni_version }}
+      - psycopg2-binary
     virtualenv: "{{ patroni_venv }}"
     virtualenv_command: /usr/bin/python3 -m venv
     state: present

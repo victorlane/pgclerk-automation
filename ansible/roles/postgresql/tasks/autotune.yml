@@ -50,12 +50,8 @@
 - name: Derive cloud_provider from DMI
   ansible.builtin.set_fact:
     _pgt_cloud: >-
-      {% set v = (_pgt_dmi.content | default('') | b64decode | trim | lower) -%}
-      {%- if 'amazon' in v -%}aws
-      {%- elif 'google' in v -%}gcp
-      {%- elif 'microsoft' in v -%}azure
-      {%- else -%}onprem
-      {%- endif -%}
+      {% set v = _pgt_dmi.content | default('') | b64decode | trim | lower -%} {%- if 'amazon' in v -%}aws{%- elif 'google' in v -%}gcp{%- elif 'microsoft' in v -%}azure{%-
+      else -%}onprem{%- endif -%}
 
 # ---------------------------------------------------------------------
 # 3. Data-directory backing device + storage class
@@ -103,7 +99,7 @@
 
 - name: Probe /sys/block for rotational flag
   ansible.builtin.slurp:
-    src: "/sys/block/{{ _pgt_block }}/queue/rotational"
+    src: /sys/block/{{ _pgt_block }}/queue/rotational
   register: _pgt_rotational_raw
   when: _pgt_block | length > 0
   failed_when: false
@@ -112,13 +108,8 @@
 - name: Derive storage_class (autodetect)
   ansible.builtin.set_fact:
     _pgt_storage_class_auto: >-
-      {%- set is_nvme = _pgt_block.startswith('nvme') -%}
-      {%- set rot = (_pgt_rotational_raw.content | default('MA==') | b64decode | trim) -%}
-      {%- if is_nvme -%}nvme
-      {%- elif rot == '0' -%}ssd
-      {%- elif rot == '1' -%}hdd
-      {%- else -%}ssd
-      {%- endif -%}
+      {%- set is_nvme = _pgt_block.startswith('nvme') -%} {%- set rot = _pgt_rotational_raw.content | default('MA==') | b64decode | trim -%} {%- if is_nvme -%}nvme{%-
+      elif rot == '0' -%}ssd{%- elif rot == '1' -%}hdd{%- else -%}ssd{%- endif -%}
 
 # Operator override wins; otherwise the autodetected value is used.
 - name: Resolve storage_class
@@ -233,7 +224,7 @@
     # 'try' = use huge pages if reserved at the OS, otherwise fall back.
     # The os_baseline role reserves vm.nr_hugepages on supported families;
     # 'try' means we don't break the start when it doesn't.
-    _pgtuned_huge_pages: "try"
+    _pgtuned_huge_pages: try
 
     # jit on by default for PG12+ (it's already the upstream default, we
     # just make it explicit). Reported and applied; experimental knob
@@ -262,11 +253,11 @@
       {{ '30s' if (_pgt_cpus | int) >= 16 else '60s' }}
 
     # Log autovacuum runs taking >1s. Mid-ground for noise.
-    _pgtuned_log_autovacuum_min_duration: "1000ms"
+    _pgtuned_log_autovacuum_min_duration: 1000ms
 
     # Idle-in-txn guard rail. Long-lived idle txns block VACUUM and
     # wedge replicas via hot_standby_feedback.
-    _pgtuned_idle_in_transaction_session_timeout: "10min"
+    _pgtuned_idle_in_transaction_session_timeout: 10min
 
     # bgwriter on SSD-class disks: more pages per cycle, shorter delay,
     # so a checkpoint storm finds less still-dirty work to do.
@@ -321,7 +312,7 @@
           similar pay-off for analytic GROUP BY on partitioned tables.
         applies_when_pg_min: 11
       recovery_prefetch:
-        value: "try"
+        value: try
         reason: >-
           Replica replay prefetches referenced pages using
           effective_io_concurrency. Big win on async replicas behind a
@@ -329,21 +320,21 @@
           {{ _pgtuned_effective_io_concurrency }}).
         applies_when_pg_min: 15
       io_method:
-        value: "worker"
+        value: worker
         reason: >-
           PG18+ async I/O. 'worker' moves I/O submission off backends to
           dedicated workers -- improves tail latency on bursty workloads.
           Set io_workers separately if you enable this.
         applies_when_pg_min: 18
       checkpoint_flush_after:
-        value: "256kB"
+        value: 256kB
         reason: >-
           Asks the kernel to flush dirty writeback every 256kB during a
           checkpoint -- smoother I/O on busy hosts, less work for the
           final fsync.
         applies_when_pg_min: 9
       backend_flush_after:
-        value: "512kB"
+        value: 512kB
         reason: >-
           Per-backend variant of checkpoint_flush_after for large bulk
           writes (COPY, CREATE INDEX). Rarely needed when bgwriter is
@@ -380,43 +371,46 @@
 - name: Display tuning summary (applied + experimental candidates)
   ansible.builtin.debug:
     msg:
-    - "============================================================"
-    - "PG autotune  host={{ inventory_hostname }}"
-    - "             cloud={{ _pgt_cloud }}  arch={{ _pgt_arch }}  vCPU={{ _pgt_cpus }}  RAM={{ _pgt_ram_mb }}MB"
-    - "             data_dir={{ postgresql_data_dir | default('(unset, compute-only)') }}"
-    - "             device=/dev/{{ _pgt_block | default('(unknown)') }}  fstype={{ _pgt_fstype | default('?') }}"
-    - "             storage_class={{ _pgt_storage_class }}  (operator override: {{ 'yes' if (postgresql_storage_class | default('')) | length > 0 else 'no -- autodetected' }})"
-    - "             profile={{ postgresql_workload_profile }}  ha={{ postgresql_ha_mode }}  pg={{ _pgt_pgver }}"
-    - "------------------------------------------------------------"
-    - "APPLIED -- safe knobs"
-    - "  shared_buffers                     = {{ postgresql_shared_buffers              | default(_pgtuned_shared_buffers_mb            ~ 'MB', true) }}"
-    - "  effective_cache_size               = {{ postgresql_effective_cache_size        | default(_pgtuned_effective_cache_mb           ~ 'MB', true) }}"
-    - "  maintenance_work_mem               = {{ postgresql_maintenance_work_mem        | default(_pgtuned_maint_work_mb                ~ 'MB', true) }}"
-    - "  work_mem                           = {{ postgresql_work_mem                    | default(_pgtuned_work_mem_mb                  ~ 'MB', true) }}"
-    - "  wal_buffers                        = {{ postgresql_wal_buffers                 | default(_pgtuned_wal_buffers_mb               ~ 'MB', true) }}"
-    - "  min/max_wal_size                   = {{ postgresql_min_wal_size                | default(_pgtuned_min_wal_size_mb              ~ 'MB', true) }} / {{ postgresql_max_wal_size | default(_pgtuned_max_wal_size_mb ~ 'MB', true) }}"
-    - "  max_slot_wal_keep_size             = {{ postgresql_max_slot_wal_keep_size      | default(_pgtuned_max_slot_wal_keep_size_mb    ~ 'MB', true) }}"
-    - "  checkpoint_completion_target       = {{ postgresql_checkpoint_completion_target| default(_pgtuned_checkpoint_completion_target, true) }}"
-    - "  random_page_cost                   = {{ postgresql_random_page_cost            | default(_pgtuned_random_page_cost,             true) }}"
-    - "  effective_io_concurrency           = {{ postgresql_effective_io_concurrency    | default(_pgtuned_effective_io_concurrency,     true) }}"
-    - "  maintenance_io_concurrency         = {{ postgresql_maintenance_io_concurrency  | default(_pgtuned_maintenance_io_concurrency,   true) }}"
-    - "  default_statistics_target          = {{ postgresql_default_statistics_target   | default(_pgtuned_default_statistics_target,    true) }}"
-    - "  max_worker_processes               = {{ postgresql_max_worker_processes        | default(_pgtuned_max_worker_processes,         true) }}"
-    - "  max_parallel_workers               = {{ postgresql_max_parallel_workers        | default(_pgtuned_max_parallel_workers,         true) }}"
-    - "  max_parallel_workers_per_gather    = {{ postgresql_max_parallel_workers_per_gather | default(_pgtuned_max_parallel_workers_per_gather, true) }}"
-    - "  max_parallel_maintenance_workers   = {{ postgresql_max_parallel_maintenance_workers | default(_pgtuned_max_parallel_maintenance_workers, true) }}"
-    - "  huge_pages                         = {{ postgresql_huge_pages                  | default(_pgtuned_huge_pages,                   true) }}"
-    - "  jit                                = {{ postgresql_jit                         | default(_pgtuned_jit,                          true) }}"
-    - "  wal_compression                    = {{ postgresql_wal_compression             | default(_pgtuned_wal_compression,              true) }}"
-    - "  track_io_timing                    = {{ postgresql_track_io_timing             | default(_pgtuned_track_io_timing,              true) }}"
-    - "  autovacuum_vacuum_cost_limit       = {{ postgresql_autovacuum_vacuum_cost_limit | default(_pgtuned_autovacuum_vacuum_cost_limit, true) }}"
-    - "  autovacuum_naptime                 = {{ postgresql_autovacuum_naptime          | default(_pgtuned_autovacuum_naptime,           true) }}"
-    - "  log_autovacuum_min_duration        = {{ postgresql_log_autovacuum_min_duration | default(_pgtuned_log_autovacuum_min_duration,  true) }}"
-    - "  idle_in_transaction_session_timeout= {{ postgresql_idle_in_transaction_session_timeout | default(_pgtuned_idle_in_transaction_session_timeout, true) }}"
-    - "  bgwriter_lru_maxpages              = {{ postgresql_bgwriter_lru_maxpages       | default(_pgtuned_bgwriter_lru_maxpages,        true) }}"
-    - "  bgwriter_delay                     = {{ postgresql_bgwriter_delay              | default(_pgtuned_bgwriter_delay,               true) }}"
-    - "  hot_standby_feedback               = {{ postgresql_hot_standby_feedback        | default(_pgtuned_hot_standby_feedback,         true) }}"
-    - "------------------------------------------------------------"
-    - "EXPERIMENTAL CANDIDATES (NOT applied -- opt in via postgresql_experimental_enabled)"
-    - "{% for slug, rec in _pg_experimental_recommendations.items() %}{% if _pgt_pgver | int >= rec.applies_when_pg_min %}  - {{ slug }} = {{ rec.value }}{% if slug in postgresql_experimental_enabled %}   [APPLIED]{% endif %}\n    {{ rec.reason | trim | replace('\n', ' ') }}\n{% endif %}{% endfor %}"
-    - "============================================================"
+      - ============================================================
+      - PG autotune  host={{ inventory_hostname }}
+      - "             cloud={{ _pgt_cloud }}  arch={{ _pgt_arch }}  vCPU={{ _pgt_cpus }}  RAM={{ _pgt_ram_mb }}MB"
+      - "             data_dir={{ postgresql_data_dir | default('(unset, compute-only)') }}"
+      - "             device=/dev/{{ _pgt_block | default('(unknown)') }}  fstype={{ _pgt_fstype | default('?') }}"
+      - "             storage_class={{ _pgt_storage_class }}  (operator override: {{ 'yes' if (postgresql_storage_class | default('')) | length > 0 else 'no -- autodetected'
+        }})"
+      - "             profile={{ postgresql_workload_profile }}  ha={{ postgresql_ha_mode }}  pg={{ _pgt_pgver }}"
+      - "------------------------------------------------------------"
+      - APPLIED -- safe knobs
+      - "  shared_buffers                     = {{ postgresql_shared_buffers              | default(_pgtuned_shared_buffers_mb            ~ 'MB', true) }}"
+      - "  effective_cache_size               = {{ postgresql_effective_cache_size        | default(_pgtuned_effective_cache_mb           ~ 'MB', true) }}"
+      - "  maintenance_work_mem               = {{ postgresql_maintenance_work_mem        | default(_pgtuned_maint_work_mb                ~ 'MB', true) }}"
+      - "  work_mem                           = {{ postgresql_work_mem                    | default(_pgtuned_work_mem_mb                  ~ 'MB', true) }}"
+      - "  wal_buffers                        = {{ postgresql_wal_buffers                 | default(_pgtuned_wal_buffers_mb               ~ 'MB', true) }}"
+      - "  min/max_wal_size                   = {{ postgresql_min_wal_size                | default(_pgtuned_min_wal_size_mb              ~ 'MB', true) }} / {{ postgresql_max_wal_size
+        | default(_pgtuned_max_wal_size_mb ~ 'MB', true) }}"
+      - "  max_slot_wal_keep_size             = {{ postgresql_max_slot_wal_keep_size      | default(_pgtuned_max_slot_wal_keep_size_mb    ~ 'MB', true) }}"
+      - "  checkpoint_completion_target       = {{ postgresql_checkpoint_completion_target | default(_pgtuned_checkpoint_completion_target, true) }}"
+      - "  random_page_cost                   = {{ postgresql_random_page_cost | default(_pgtuned_random_page_cost, true) }}"
+      - "  effective_io_concurrency           = {{ postgresql_effective_io_concurrency | default(_pgtuned_effective_io_concurrency, true) }}"
+      - "  maintenance_io_concurrency         = {{ postgresql_maintenance_io_concurrency | default(_pgtuned_maintenance_io_concurrency, true) }}"
+      - "  default_statistics_target          = {{ postgresql_default_statistics_target | default(_pgtuned_default_statistics_target, true) }}"
+      - "  max_worker_processes               = {{ postgresql_max_worker_processes | default(_pgtuned_max_worker_processes, true) }}"
+      - "  max_parallel_workers               = {{ postgresql_max_parallel_workers | default(_pgtuned_max_parallel_workers, true) }}"
+      - "  max_parallel_workers_per_gather    = {{ postgresql_max_parallel_workers_per_gather | default(_pgtuned_max_parallel_workers_per_gather, true) }}"
+      - "  max_parallel_maintenance_workers   = {{ postgresql_max_parallel_maintenance_workers | default(_pgtuned_max_parallel_maintenance_workers, true) }}"
+      - "  huge_pages                         = {{ postgresql_huge_pages | default(_pgtuned_huge_pages, true) }}"
+      - "  jit                                = {{ postgresql_jit | default(_pgtuned_jit, true) }}"
+      - "  wal_compression                    = {{ postgresql_wal_compression | default(_pgtuned_wal_compression, true) }}"
+      - "  track_io_timing                    = {{ postgresql_track_io_timing | default(_pgtuned_track_io_timing, true) }}"
+      - "  autovacuum_vacuum_cost_limit       = {{ postgresql_autovacuum_vacuum_cost_limit | default(_pgtuned_autovacuum_vacuum_cost_limit, true) }}"
+      - "  autovacuum_naptime                 = {{ postgresql_autovacuum_naptime | default(_pgtuned_autovacuum_naptime, true) }}"
+      - "  log_autovacuum_min_duration        = {{ postgresql_log_autovacuum_min_duration | default(_pgtuned_log_autovacuum_min_duration, true) }}"
+      - "  idle_in_transaction_session_timeout= {{ postgresql_idle_in_transaction_session_timeout | default(_pgtuned_idle_in_transaction_session_timeout, true) }}"
+      - "  bgwriter_lru_maxpages              = {{ postgresql_bgwriter_lru_maxpages | default(_pgtuned_bgwriter_lru_maxpages, true) }}"
+      - "  bgwriter_delay                     = {{ postgresql_bgwriter_delay | default(_pgtuned_bgwriter_delay, true) }}"
+      - "  hot_standby_feedback               = {{ postgresql_hot_standby_feedback | default(_pgtuned_hot_standby_feedback, true) }}"
+      - "------------------------------------------------------------"
+      - EXPERIMENTAL CANDIDATES (NOT applied -- opt in via postgresql_experimental_enabled)
+      - "{% for slug, rec in _pg_experimental_recommendations.items() %}{% if _pgt_pgver | int >= rec.applies_when_pg_min %}  - {{ slug }} = {{ rec.value }}{% if
+        slug in postgresql_experimental_enabled %}   [APPLIED]{% endif %}\n    {{ rec.reason | trim | replace('\n', ' ') }}\n{% endif %}{% endfor %}"
+      - ============================================================

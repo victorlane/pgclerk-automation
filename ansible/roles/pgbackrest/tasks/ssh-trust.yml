@@ -43,7 +43,7 @@
     owner: postgres
     group: postgres
     mode: "0600"
-    comment: "pgbackrest@{{ inventory_hostname }}"
+    comment: pgbackrest@{{ inventory_hostname }}
 
 - name: Read postgres user public key
   ansible.builtin.slurp:
@@ -65,8 +65,8 @@
     state: present
   loop: "{{ groups['backup_servers'] | default([]) }}"
   when:
-  - _pgbr_is_pg_node
-  - hostvars[item]['_pgbr_pubkey_text'] is defined
+    - _pgbr_is_pg_node
+    - hostvars[item]['_pgbr_pubkey_text'] is defined
   loop_control:
     label: "{{ item }}"
 
@@ -77,8 +77,8 @@
     state: present
   loop: "{{ groups['postgres_servers'] | default([]) }}"
   when:
-  - _pgbr_is_backup_server
-  - hostvars[item]['_pgbr_pubkey_text'] is defined
+    - _pgbr_is_backup_server
+    - hostvars[item]['_pgbr_pubkey_text'] is defined
   loop_control:
     label: "{{ item }}"
 
@@ -112,7 +112,7 @@
     label: "{{ hostvars[item].ansible_host | default(item) }}"
 
 - name: Scan host keys for the other side of the trust
-  ansible.builtin.command: "ssh-keyscan -t ed25519,rsa,ecdsa {{ hostvars[item].ansible_host | default(item) }}"
+  ansible.builtin.command: ssh-keyscan -t ed25519,rsa,ecdsa {{ hostvars[item].ansible_host | default(item) }}
   loop: "{{ (groups['backup_servers'] | default([])) if _pgbr_is_pg_node else (groups['postgres_servers'] | default([])) }}"
   register: _pgbr_keyscans
   changed_when: false

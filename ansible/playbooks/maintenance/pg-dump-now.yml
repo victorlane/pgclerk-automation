@@ -38,57 +38,57 @@
     dump_format: c
     dump_jobs: 4
   tasks:
-  - name: Assert required vars are defined
-    ansible.builtin.assert:
-      that:
-      - db_name is defined
-      - db_name | length > 0
-      - dump_format in ['c', 'd', 't', 'p']
-      fail_msg: "db_name is required; dump_format must be one of c|d|t|p."
+    - name: Assert required vars are defined
+      ansible.builtin.assert:
+        that:
+          - db_name is defined
+          - db_name | length > 0
+          - dump_format in ['c', 'd', 't', 'p']
+        fail_msg: db_name is required; dump_format must be one of c|d|t|p.
 
-  - name: Resolve dump filename
-    ansible.builtin.set_fact:
-      _dump_filename: "{{ dump_filename | default(db_name ~ '_' ~ ansible_date_time.iso8601_basic_short ~ '.dump') }}"
+    - name: Resolve dump filename
+      ansible.builtin.set_fact:
+        _dump_filename: "{{ dump_filename | default(db_name ~ '_' ~ ansible_date_time.iso8601_basic_short ~ '.dump') }}"
 
-  - name: Compose full target path
-    ansible.builtin.set_fact:
-      _dump_target: "{{ dump_path }}/{{ _dump_filename }}"
+    - name: Compose full target path
+      ansible.builtin.set_fact:
+        _dump_target: "{{ dump_path }}/{{ _dump_filename }}"
 
-  - name: Ensure dump directory exists
-    ansible.builtin.file:
-      path: "{{ dump_path }}"
-      state: directory
-      owner: postgres
-      group: postgres
-      mode: "0750"
+    - name: Ensure dump directory exists
+      ansible.builtin.file:
+        path: "{{ dump_path }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0750"
 
-  - name: Run pg_dump ({{ dump_format }}) for {{ db_name }}
-    become_user: postgres
-    ansible.builtin.command:
-      argv: >-
-        {{
-          ['pg_dump', '-F', dump_format] +
-          (['-j', dump_jobs | string, '-f', _dump_target] if dump_format == 'd'
-           else ['-f', _dump_target]) +
-          [db_name]
-        }}
-    register: _pg_dump
-    changed_when: true
+    - name: Run pg_dump ({{ dump_format }}) for {{ db_name }}
+      become_user: postgres
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['pg_dump', '-F', dump_format] +
+            (['-j', dump_jobs | string, '-f', _dump_target] if dump_format == 'd'
+             else ['-f', _dump_target]) +
+            [db_name]
+          }}
+      register: _pg_dump
+      changed_when: true
 
-  - name: Stat the resulting dump
-    ansible.builtin.stat:
-      path: "{{ _dump_target }}"
-    register: _dump_stat
+    - name: Stat the resulting dump
+      ansible.builtin.stat:
+        path: "{{ _dump_target }}"
+      register: _dump_stat
 
-  - name: Report dump result
-    ansible.builtin.debug:
-      msg:
-      - "Dump complete: {{ _dump_target }}"
-      - "Format: {{ dump_format }}"
-      - "Size:   {{ _dump_stat.stat.size | default('unknown') }} bytes"
-      - "Exists: {{ _dump_stat.stat.exists }}"
+    - name: Report dump result
+      ansible.builtin.debug:
+        msg:
+          - "Dump complete: {{ _dump_target }}"
+          - "Format: {{ dump_format }}"
+          - "Size:   {{ _dump_stat.stat.size | default('unknown') }} bytes"
+          - "Exists: {{ _dump_stat.stat.exists }}"
 
-  - name: Report pg_dump stderr (warnings, if any)
-    ansible.builtin.debug:
-      var: _pg_dump.stderr_lines
-    when: _pg_dump.stderr_lines | length > 0
+    - name: Report pg_dump stderr (warnings, if any)
+      ansible.builtin.debug:
+        var: _pg_dump.stderr_lines
+      when: _pg_dump.stderr_lines | length > 0

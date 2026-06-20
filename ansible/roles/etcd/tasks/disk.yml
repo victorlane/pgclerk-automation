@@ -4,7 +4,7 @@
 # for the rationale (etcd fsync vs PG WAL contention on the same disk).
 
 - name: Resolve etcd block device (follow symlinks)
-  ansible.builtin.command: "readlink -f {{ etcd_data_device }}"
+  ansible.builtin.command: readlink -f {{ etcd_data_device }}
   register: _etcd_device_resolved
   changed_when: false
 
@@ -20,8 +20,8 @@
 - name: Refuse to mount when the device is missing
   ansible.builtin.assert:
     that:
-    - _etcd_device_stat.stat.exists
-    - _etcd_device_stat.stat.isblk | default(false)
+      - _etcd_device_stat.stat.exists
+      - _etcd_device_stat.stat.isblk | default(false)
     fail_msg: >-
       etcd_data_device='{{ etcd_data_device }}' does not exist or is not
       a block device on this host (resolved to {{ _etcd_device }}).
@@ -31,7 +31,7 @@
 # returns nothing -- this keeps a re-run safe and prevents the role from
 # nuking a populated etcd disk on a second pass.
 - name: Check whether the device already has a filesystem
-  ansible.builtin.command: "blkid -s TYPE -o value {{ _etcd_device }}"
+  ansible.builtin.command: blkid -s TYPE -o value {{ _etcd_device }}
   register: _etcd_device_fstype
   changed_when: false
   failed_when: false
@@ -43,7 +43,7 @@
   when: _etcd_device_fstype.stdout | length == 0
 
 - name: Read filesystem UUID for fstab
-  ansible.builtin.command: "blkid -s UUID -o value {{ _etcd_device }}"
+  ansible.builtin.command: blkid -s UUID -o value {{ _etcd_device }}
   register: _etcd_device_uuid
   changed_when: false
 
@@ -57,7 +57,7 @@
 
 - name: Mount etcd_data_device at etcd_data_dir (and persist in fstab)
   ansible.posix.mount:
-    src: "UUID={{ _etcd_device_uuid.stdout | trim }}"
+    src: UUID={{ _etcd_device_uuid.stdout | trim }}
     path: "{{ etcd_data_dir }}"
     fstype: "{{ etcd_data_fstype }}"
     opts: "{{ etcd_data_mount_options }}"

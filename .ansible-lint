@@ -1,0 +1,62 @@
+---
+# Project ansible-lint config. The repo's house style intentionally
+# diverges from a couple of ansible-lint defaults; the rest of the
+# excluded rules track legacy imports we haven't triaged yet.
+
+profile: basic
+
+# Lint everything in ansible/ -- the CI step still scopes to
+# ansible/playbooks/ but ansible-lint follows include_tasks /
+# include_role into the roles directory.
+exclude_paths:
+  - ansible/collections/   # vendored Galaxy collections, not ours
+  - .github/
+  # The maintenance playbooks below resolve `hosts:` from
+  # `{{ groups['postgres_servers'] | first }}` style expressions
+  # that reference inventory groups only present at runtime.
+  # ansible-lint's static syntax-check loads no inventory and
+  # therefore errors out on every one with the unskippable
+  # syntax-check[specific] rule. CI still runs
+  # `ansible-playbook --syntax-check` as a second step, which DOES
+  # load the staging inventory and catches genuine syntax issues.
+  - ansible/playbooks/maintenance/add-database.yml
+  - ansible/playbooks/maintenance/add-user.yml
+  - ansible/playbooks/maintenance/analyze.yml
+  - ansible/playbooks/maintenance/backup-now.yml
+  - ansible/playbooks/maintenance/certificate-rotate.yml
+  - ansible/playbooks/maintenance/drain-node.yml
+  - ansible/playbooks/maintenance/drop-connections.yml
+  - ansible/playbooks/maintenance/failover.yml
+  - ansible/playbooks/maintenance/pg-dump-now.yml
+  - ansible/playbooks/maintenance/reindex.yml
+  - ansible/playbooks/maintenance/restore.yml
+  - ansible/playbooks/maintenance/rotate-password.yml
+  - ansible/playbooks/maintenance/switchover.yml
+  - ansible/playbooks/maintenance/upgrade-cluster.yml
+
+# Mock managed-DB modules that ship in newer collection versions
+# than the ones we pin in collections/requirements.yml. The pinned
+# google.cloud (1.4.0) and azure.azcollection (2.7.0) don't yet
+# ship gcp_alloydb_user and azure_rm_postgresqlflexibleserver_firewallrule
+# respectively. Tracked separately; mocking lets the rest of the
+# managed-DB playbooks lint cleanly until we bump the pins.
+mock_modules:
+  - google.cloud.gcp_alloydb_user
+  - google.cloud.gcp_secret_manager
+  - google.cloud.gcp_sql_instance
+  - azure.azcollection.azure_rm_postgresqlflexibleserver
+  - azure.azcollection.azure_rm_postgresqlflexibleserver_firewallrule
+  - azure.azcollection.azure_rm_postgresqlflexibledatabase
+
+skip_list:
+  # The postgresql role uses underscore-prefixed locals (_pgtuned_*,
+  # _pg_*) for facts that flow between autotune.yml -> configure.yml
+  # -> postgresql.conf.j2. They are deliberately NOT named
+  # postgresql_<x> because they are role-private, not part of the
+  # public knob surface (which is documented in defaults/main.yml
+  # and roles/postgresql/README.md).
+  - var-naming[no-role-prefix]
+
+  # Legacy meta/main.yml files from the pgmanager import predate
+  # ansible-lint v24's stricter meta schema. Tracked separately.
+  - schema[meta]

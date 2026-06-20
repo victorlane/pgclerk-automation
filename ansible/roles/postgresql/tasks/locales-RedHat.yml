@@ -13,7 +13,7 @@
 
 - name: Install glibc-langpack for each locale's language
   ansible.builtin.dnf:
-    name: "glibc-langpack-{{ item.split('_')[0] | lower }}"
+    name: glibc-langpack-{{ item.split('_')[0] | lower }}
     state: present
   loop: "{{ postgresql_effective_locales }}"
   # C.UTF-8 ships with glibc, no langpack needed.

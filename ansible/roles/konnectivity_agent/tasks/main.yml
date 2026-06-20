@@ -9,8 +9,7 @@
 - name: Assert supported OS
   ansible.builtin.assert:
     that:
-    - ansible_facts['os_family'] in ['RedHat', 'Debian']
-      or ansible_facts['distribution'] == 'Amazon'
+      - ansible_facts['os_family'] in ['RedHat', 'Debian'] or ansible_facts['distribution'] == 'Amazon'
     fail_msg: >-
       The konnectivity_agent role supports RedHat, Debian, Ubuntu, and
       Amazon Linux; got distribution='{{ ansible_facts['distribution'] }}',
@@ -19,10 +18,10 @@
 - name: Assert required vars
   ansible.builtin.assert:
     that:
-    - konnectivity_server_url | length > 0
-    - konnectivity_bootstrap_token | length > 0
-    - konnectivity_cluster | length > 0
-    - konnectivity_mode in ['server', 'worker']
+      - konnectivity_server_url | length > 0
+      - konnectivity_bootstrap_token | length > 0
+      - konnectivity_cluster | length > 0
+      - konnectivity_mode in ['server', 'worker']
     fail_msg: >-
       konnectivity_server_url, konnectivity_bootstrap_token,
       konnectivity_cluster, and konnectivity_mode (server|worker) are
@@ -31,7 +30,7 @@
 - name: Assert worker probe target is set in worker mode
   ansible.builtin.assert:
     that: konnectivity_worker_probe | length > 0
-    fail_msg: "konnectivity_worker_probe is required when konnectivity_mode=worker"
+    fail_msg: konnectivity_worker_probe is required when konnectivity_mode=worker
   when: konnectivity_mode == 'worker'
 
 - name: Mirror the node_exporter dispatch (Amazon != RedHat for our purposes)
@@ -55,7 +54,7 @@
       resolved arch '{{ _kn_arch }}' is not supported.
 
 - name: Install pre-reqs (per OS family)
-  ansible.builtin.include_tasks: "prereqs-{{ _kn_os_variant }}.yml"
+  ansible.builtin.include_tasks: prereqs-{{ _kn_os_variant }}.yml
 
 - name: Ensure konnectivity system user
   ansible.builtin.user:
@@ -75,8 +74,8 @@
     group: "{{ konnectivity_group }}"
     mode: "0700"
   loop:
-  - "{{ konnectivity_conf_dir }}"
-  - "{{ konnectivity_home }}"
+    - "{{ konnectivity_conf_dir }}"
+    - "{{ konnectivity_home }}"
 
 - name: Compose binary URL
   ansible.builtin.set_fact:
@@ -114,8 +113,8 @@
     group: root
     mode: "0644"
   notify:
-  - konnectivity reload systemd
-  - konnectivity restart
+    - konnectivity reload systemd
+    - konnectivity restart
 
 - name: Flush handlers so the unit is in place before enable/start
   ansible.builtin.meta: flush_handlers

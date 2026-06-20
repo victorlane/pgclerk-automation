@@ -7,5 +7,5 @@
   vars:
     postgresql_ha_mode: standalone
   roles:
-  - role: os_baseline
-  - role: postgresql
+    - role: os_baseline
+    - role: postgresql

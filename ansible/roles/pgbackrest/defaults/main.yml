@@ -34,7 +34,6 @@ pgbackrest_process_max: 2
 #     retention_diff: 7
 #     verify_tls: 'y'
 pgbackrest_repos: []
-
 # When true, the role will set up passwordless SSH trust (postgres user)
 # between hosts in `postgres_servers` and hosts in `backup_servers`. Only
 # applies when at least one repo of type 'server' is configured.
@@ -48,8 +47,8 @@ pgbackrest_manage_archive_command: true
 # Scheduled backups on the backup_servers host(s). Set to false to skip
 # installing the systemd timers. Schedules use systemd OnCalendar syntax.
 pgbackrest_schedule: true
-pgbackrest_schedule_full: "Sun *-*-* 02:00:00"
-pgbackrest_schedule_diff: "Mon..Sat *-*-* 02:00:00"
+pgbackrest_schedule_full: Sun *-*-* 02:00:00
+pgbackrest_schedule_diff: Mon..Sat *-*-* 02:00:00
 
 # Package name -- pulled from PGDG, which the postgresql role already
 # enabled on every PG node. Backup servers must also have PGDG enabled.

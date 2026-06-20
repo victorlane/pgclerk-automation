@@ -29,4 +29,4 @@
   become: true
   gather_facts: true
   roles:
-  - role: konnectivity_agent
+    - role: konnectivity_agent

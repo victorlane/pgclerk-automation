@@ -4,6 +4,6 @@
 # Either source is fine -- we don't pin which repo dnf picks. The package
 # drops the binary at /usr/bin/node_exporter.
 node_exporter_packages:
-- prometheus-node-exporter
+  - prometheus-node-exporter
 
 node_exporter_package_bin: /usr/bin/node_exporter

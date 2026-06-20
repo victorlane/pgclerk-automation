@@ -4,7 +4,7 @@
 - name: Resolve tarball architecture
   ansible.builtin.set_fact:
     _node_tarball_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
-    _node_release_base: "https://github.com/prometheus/node_exporter/releases/download"
+    _node_release_base: https://github.com/prometheus/node_exporter/releases/download
 
 - name: Ensure system group exists
   ansible.builtin.group:
@@ -30,37 +30,37 @@
 - name: Download and extract node_exporter tarball
   when: not _node_binary.stat.exists
   block:
-  - name: Create install directory
-    ansible.builtin.file:
-      path: "{{ node_exporter_install_dir }}"
-      state: directory
-      owner: root
-      group: root
-      mode: "0755"
+    - name: Create install directory
+      ansible.builtin.file:
+        path: "{{ node_exporter_install_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
 
-  # Upstream publishes a sha256sums.txt for the release, not per-asset
-  # .sha256 sidecars. We rely on TLS to GitHub and the pinned version. If
-  # you need stronger integrity guarantees, mirror the tarball internally
-  # and add a checksum: arg below (e.g. checksum: "sha256:abc...").
-  - name: Fetch node_exporter tarball
-    ansible.builtin.get_url:
-      url: "{{ _node_release_base }}/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-{{ _node_tarball_arch }}.tar.gz"
-      dest: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
-      mode: "0644"
+    # Upstream publishes a sha256sums.txt for the release, not per-asset
+    # .sha256 sidecars. We rely on TLS to GitHub and the pinned version. If
+    # you need stronger integrity guarantees, mirror the tarball internally
+    # and add a checksum: arg below (e.g. checksum: "sha256:abc...").
+    - name: Fetch node_exporter tarball
+      ansible.builtin.get_url:
+        url: "{{ _node_release_base }}/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-{{ _node_tarball_arch }}.tar.gz"
+        dest: /tmp/node_exporter-{{ node_exporter_version }}.tar.gz
+        mode: "0644"
 
-  - name: Extract node_exporter tarball
-    ansible.builtin.unarchive:
-      src: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
-      dest: "{{ node_exporter_install_dir }}"
-      remote_src: true
-      extra_opts: [ "--strip-components=1" ]
-      owner: root
-      group: root
+    - name: Extract node_exporter tarball
+      ansible.builtin.unarchive:
+        src: /tmp/node_exporter-{{ node_exporter_version }}.tar.gz
+        dest: "{{ node_exporter_install_dir }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        owner: root
+        group: root
 
-  - name: Remove tarball
-    ansible.builtin.file:
-      path: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
-      state: absent
+    - name: Remove tarball
+      ansible.builtin.file:
+        path: /tmp/node_exporter-{{ node_exporter_version }}.tar.gz
+        state: absent
 
 - name: Symlink node_exporter into /usr/local/bin
   ansible.builtin.file:

@@ -31,7 +31,7 @@ konnectivity_version: latest
 # unless the operator team explicitly opted in. The systemd unit reads
 # this; flipping it requires a restart.
 konnectivity_allow_exec: 0
-konnectivity_allow_exec_cmds: "ansible,ansible-playbook,pg_isready,psql"
+konnectivity_allow_exec_cmds: ansible,ansible-playbook,pg_isready,psql
 
 # NTP host for clock-drift sampling. Empty disables.
 konnectivity_ntp_host: time.cloudflare.com
@@ -57,7 +57,7 @@ konnectivity_bin_path: /usr/local/bin/konnectivity-agent
 # central server, which proxies signed builds. Set this to a GitHub
 # Release URL if you'd rather pull directly:
 #   konnectivity_download_base: https://github.com/brinkhorst/pgclerk-konnectivity/releases/download/v0.4.1
-konnectivity_download_base: "{{ konnectivity_server_url | regex_replace('/$','') }}/install"
+konnectivity_download_base: "{{ konnectivity_server_url | regex_replace('/$', '') }}/install"
 
 # Override the resolved arch slug (auto-detected: amd64 | arm64).
 konnectivity_arch_override: ""

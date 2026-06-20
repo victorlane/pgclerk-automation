@@ -19,6 +19,12 @@
         database_version: "{{ db_version }}"
         settings:
           tier: "{{ db_tier }}"
-          database_flags: "{{ [ {'name': k, 'value': v } for k, v in db_database_flags.items() ] }}"
+          # jinja2 has no dict comprehension -- dict2items returns
+          # {key, value} pairs, which we rename to {name, value} via
+          # combine() to match Cloud SQL's database_flags shape.
+          database_flags: >-
+            {{ db_database_flags
+               | dict2items(key_name='name', value_name='value')
+               | list }}
         state: present
         auth_kind: serviceaccount

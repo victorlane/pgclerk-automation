@@ -12,33 +12,33 @@
   become: true
   gather_facts: false
   tasks:
-  - name: Stop + disable konnectivity-agent
-    ansible.builtin.service:
-      name: konnectivity-agent
-      state: stopped
-      enabled: false
-    failed_when: false
+    - name: Stop + disable konnectivity-agent
+      ansible.builtin.service:
+        name: konnectivity-agent
+        state: stopped
+        enabled: false
+      failed_when: false
 
-  - name: Remove systemd unit
-    ansible.builtin.file:
-      path: /etc/systemd/system/konnectivity-agent.service
-      state: absent
-    notify: reload systemd
+    - name: Remove systemd unit
+      ansible.builtin.file:
+        path: /etc/systemd/system/konnectivity-agent.service
+        state: absent
+      notify: Reload systemd
 
-  - name: Remove binary
-    ansible.builtin.file:
-      path: /usr/local/bin/konnectivity-agent
-      state: absent
+    - name: Remove binary
+      ansible.builtin.file:
+        path: /usr/local/bin/konnectivity-agent
+        state: absent
 
-  - name: Remove env + token + data dir
-    ansible.builtin.file:
-      path: "{{ item }}"
-      state: absent
-    loop:
-    - /etc/konnectivity
-    - /var/lib/konnectivity
+    - name: Remove env + token + data dir
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/konnectivity
+        - /var/lib/konnectivity
 
   handlers:
-  - name: reload systemd
-    ansible.builtin.systemd:
-      daemon_reload: true
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

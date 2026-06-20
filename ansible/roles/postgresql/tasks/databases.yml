@@ -33,11 +33,11 @@
   become_user: postgres
   community.postgresql.postgresql_query:
     db: "{{ item.name }}"
-    query: "GRANT CONNECT ON DATABASE {{ item.name | quote }} TO db_readonly, db_readwrite, db_admin"
+    query: GRANT CONNECT ON DATABASE {{ item.name | quote }} TO db_readonly, db_readwrite, db_admin
   loop: "{{ postgresql_databases }}"
   when:
-  - postgresql_apply_hardened_template | bool
-  - item.state | default('present') == 'present'
+    - postgresql_apply_hardened_template | bool
+    - item.state | default('present') == 'present'
 
 - name: Ensure users exist
   become: true
@@ -61,6 +61,6 @@
     state: present
   loop: "{{ postgresql_users }}"
   when:
-  - item.db is defined
-  - item.priv is defined
+    - item.db is defined
+    - item.priv is defined
   no_log: true

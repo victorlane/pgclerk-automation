@@ -43,12 +43,12 @@
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Assert upgrade_to_version is supported
-    ansible.builtin.assert:
-      that:
-      - upgrade_to_version is defined
-      - upgrade_to_version | string in ['15', '16', '17', '18']
-      fail_msg: "upgrade_to_version must be one of 15 / 16 / 17 / 18; got '{{ upgrade_to_version | default('undefined') }}'."
+    - name: Assert upgrade_to_version is supported
+      ansible.builtin.assert:
+        that:
+          - upgrade_to_version is defined
+          - upgrade_to_version | string in ['15', '16', '17', '18']
+        fail_msg: upgrade_to_version must be one of 15 / 16 / 17 / 18; got '{{ upgrade_to_version | default('undefined') }}'.
 
 - name: Pre-flight every cluster member
   hosts: postgres_servers
@@ -58,111 +58,111 @@
     upgrade_method: link
     upgrade_dry_run: false
   tasks:
-  - name: Refuse unless cluster is in patroni mode
-    ansible.builtin.assert:
-      that: (postgresql_ha_mode | default('standalone')) == 'patroni'
-      fail_msg: >-
-        upgrade-cluster.yml is HA-specific (Patroni).  Host
-        {{ inventory_hostname }} runs postgresql_ha_mode=
-        {{ postgresql_ha_mode | default('standalone') }}.  Use
-        upgrade-major.yml for standalone hosts.
+    - name: Refuse unless cluster is in patroni mode
+      ansible.builtin.assert:
+        that: (postgresql_ha_mode | default('standalone')) == 'patroni'
+        fail_msg: >-
+          upgrade-cluster.yml is HA-specific (Patroni).  Host
+          {{ inventory_hostname }} runs postgresql_ha_mode=
+          {{ postgresql_ha_mode | default('standalone') }}.  Use
+          upgrade-major.yml for standalone hosts.
 
-  - name: Resolve OS variant + per-OS PG paths
-    ansible.builtin.set_fact:
-      _uc_os_variant: >-
-        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
-           else ansible_facts['os_family'] }}
+    - name: Resolve OS variant + per-OS PG paths
+      ansible.builtin.set_fact:
+        _uc_os_variant: >-
+          {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+             else ansible_facts['os_family'] }}
 
-  - name: Load source-version PG paths
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
-      name: _uc_src_vars
+    - name: Load source-version PG paths
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
+        name: _uc_src_vars
 
-  - name: Read installed PG major version (PG_VERSION file)
-    ansible.builtin.slurp:
-      src: "{{ _uc_src_vars.postgresql_data_dir }}/PG_VERSION"
-    register: _uc_pg_version_file
+    - name: Read installed PG major version (PG_VERSION file)
+      ansible.builtin.slurp:
+        src: "{{ _uc_src_vars.postgresql_data_dir }}/PG_VERSION"
+      register: _uc_pg_version_file
 
-  - name: Compute source PG major version
-    ansible.builtin.set_fact:
-      _uc_from_version: "{{ (_uc_pg_version_file.content | b64decode | trim).split('.')[0] }}"
+    - name: Compute source PG major version
+      ansible.builtin.set_fact:
+        _uc_from_version: "{{ (_uc_pg_version_file.content | b64decode | trim).split('.')[0] }}"
 
-  - name: Assert target version is strictly greater than source
-    ansible.builtin.assert:
-      that: (upgrade_to_version | int) > (_uc_from_version | int)
-      fail_msg: >-
-        Target version {{ upgrade_to_version }} is not greater than the
-        installed source version {{ _uc_from_version }} on
-        {{ inventory_hostname }}.  pg_upgrade only goes forwards.
+    - name: Assert target version is strictly greater than source
+      ansible.builtin.assert:
+        that: (upgrade_to_version | int) > (_uc_from_version | int)
+        fail_msg: >-
+          Target version {{ upgrade_to_version }} is not greater than the
+          installed source version {{ _uc_from_version }} on
+          {{ inventory_hostname }}.  pg_upgrade only goes forwards.
 
-  - name: Load target-version PG paths
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
-      name: _uc_dst_vars
-    vars:
-      postgresql_version: "{{ upgrade_to_version }}"
+    - name: Load target-version PG paths
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
+        name: _uc_dst_vars
+      vars:
+        postgresql_version: "{{ upgrade_to_version }}"
 
-  - name: Refuse to upgrade with active replication slots
-    become: true
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: >-
-        SELECT slot_name, slot_type, active
-        FROM pg_replication_slots
-        WHERE active = true AND slot_name NOT LIKE 'patroni_%'
-    register: _uc_active_slots
-    failed_when: (_uc_active_slots.query_result | default([])) | length > 0
+    - name: Refuse to upgrade with active replication slots
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT slot_name, slot_type, active
+          FROM pg_replication_slots
+          WHERE active = true AND slot_name NOT LIKE 'patroni_%'
+      register: _uc_active_slots
+      failed_when: (_uc_active_slots.query_result | default([])) | length > 0
 
-  - name: Install target-version PG packages via the postgresql role
-    ansible.builtin.include_role:
-      name: postgresql
-      tasks_from: "install-{{ _uc_os_variant }}.yml"
-    vars:
-      postgresql_version: "{{ upgrade_to_version }}"
-      postgresql_ha_mode: standalone
+    - name: Install target-version PG packages via the postgresql role
+      ansible.builtin.include_role:
+        name: postgresql
+        tasks_from: install-{{ _uc_os_variant }}.yml
+      vars:
+        postgresql_version: "{{ upgrade_to_version }}"
+        postgresql_ha_mode: standalone
 
-  - name: Run pg_upgrade --check (per-host pre-flight)
-    become: true
-    become_user: postgres
-    ansible.builtin.command:
-      argv:
-      - "{{ _uc_dst_vars.postgresql_bin_path }}/pg_upgrade"
-      - "--old-bindir={{ _uc_src_vars.postgresql_bin_path }}"
-      - "--new-bindir={{ _uc_dst_vars.postgresql_bin_path }}"
-      - "--old-datadir={{ _uc_src_vars.postgresql_data_dir }}"
-      - "--new-datadir={{ _uc_dst_vars.postgresql_data_dir }}"
-      - "--check"
-      chdir: "{{ _uc_dst_vars.postgresql_data_dir | dirname }}"
-    register: _uc_check
-    changed_when: false
-    failed_when: _uc_check.rc != 0
+    - name: Run pg_upgrade --check (per-host pre-flight)
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv:
+          - "{{ _uc_dst_vars.postgresql_bin_path }}/pg_upgrade"
+          - --old-bindir={{ _uc_src_vars.postgresql_bin_path }}
+          - --new-bindir={{ _uc_dst_vars.postgresql_bin_path }}
+          - --old-datadir={{ _uc_src_vars.postgresql_data_dir }}
+          - --new-datadir={{ _uc_dst_vars.postgresql_data_dir }}
+          - --check
+        chdir: "{{ _uc_dst_vars.postgresql_data_dir | dirname }}"
+      register: _uc_check
+      changed_when: false
+      failed_when: _uc_check.rc != 0
 
-  - name: Display pre-flight check output
-    ansible.builtin.debug:
-      var: _uc_check.stdout_lines
+    - name: Display pre-flight check output
+      ansible.builtin.debug:
+        var: _uc_check.stdout_lines
 
-  - name: Dry-run verdict
-    ansible.builtin.debug:
-      msg:
-      - "Dry-run pre-flight PASSED for {{ inventory_hostname }}: "
-      - "  {{ _uc_from_version }} -> {{ upgrade_to_version }}  ({{ upgrade_method }} mode)"
-    when: upgrade_dry_run | bool
+    - name: Dry-run verdict
+      ansible.builtin.debug:
+        msg:
+          - "Dry-run pre-flight PASSED for {{ inventory_hostname }}: "
+          - "  {{ _uc_from_version }} -> {{ upgrade_to_version }}  ({{ upgrade_method }} mode)"
+      when: upgrade_dry_run | bool
 
 - name: Stop here for dry-run
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Dry-run finished -- skipping actual upgrade
-    ansible.builtin.debug:
-      msg:
-      - "upgrade_dry_run=true; pg_upgrade --check passed on every host."
-      - "Re-run with -e upgrade_dry_run=false to execute the upgrade."
-    when: upgrade_dry_run | default(false) | bool
+    - name: Dry-run finished -- skipping actual upgrade
+      ansible.builtin.debug:
+        msg:
+          - upgrade_dry_run=true; pg_upgrade --check passed on every host.
+          - Re-run with -e upgrade_dry_run=false to execute the upgrade.
+      when: upgrade_dry_run | default(false) | bool
 
-  - name: End play on dry run
-    ansible.builtin.meta: end_play
-    when: upgrade_dry_run | default(false) | bool
+    - name: End play on dry run
+      ansible.builtin.meta: end_play
+      when: upgrade_dry_run | default(false) | bool
 
 # --- Capture topology + pause Patroni cluster-wide -----------------------
 
@@ -171,54 +171,54 @@
   become: true
   gather_facts: false
   tasks:
-  - name: Capture cluster topology (before)
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
-    register: _uc_list_pre
-    changed_when: false
+    - name: Capture cluster topology (before)
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+      register: _uc_list_pre
+      changed_when: false
 
-  - name: Identify current leader
-    ansible.builtin.set_fact:
-      _uc_leader: >-
-        {{ (_uc_list_pre.stdout | from_json
-            | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
-            | list | first | default({})).Member | default('') }}
+    - name: Identify current leader
+      ansible.builtin.set_fact:
+        _uc_leader: >-
+          {{ (_uc_list_pre.stdout | from_json
+              | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
+              | list | first | default({})).Member | default('') }}
 
-  - name: Identify replicas (not leader, from cluster view)
-    ansible.builtin.set_fact:
-      _uc_replicas: >-
-        {{ (_uc_list_pre.stdout | from_json
-            | rejectattr('Role', 'in', ['Leader', 'Standby Leader'])
-            | map(attribute='Member') | list) }}
+    - name: Identify replicas (not leader, from cluster view)
+      ansible.builtin.set_fact:
+        _uc_replicas: >-
+          {{ (_uc_list_pre.stdout | from_json
+              | rejectattr('Role', 'in', ['Leader', 'Standby Leader'])
+              | map(attribute='Member') | list) }}
 
-  - name: Stash leader + replicas for later plays
-    ansible.builtin.add_host:
-      name: "_uc_facts"
-      groups: _uc_facts
-      uc_leader: "{{ _uc_leader }}"
-      uc_replicas: "{{ _uc_replicas }}"
+    - name: Stash leader + replicas for later plays
+      ansible.builtin.add_host:
+        name: _uc_facts
+        groups: _uc_facts
+        uc_leader: "{{ _uc_leader }}"
+        uc_replicas: "{{ _uc_replicas }}"
 
-  - name: Add the current leader to a transient group so the next play can target it
-    ansible.builtin.add_host:
-      name: "{{ _uc_leader }}"
-      groups: _uc_current_leader
+    - name: Add the current leader to a transient group so the next play can target it
+      ansible.builtin.add_host:
+        name: "{{ _uc_leader }}"
+        groups: _uc_current_leader
 
-  - name: Pause Patroni cluster-wide (no auto-failover during upgrade)
-    ansible.builtin.command:
-      cmd: >-
-        /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
-        pause --wait {{ patroni_scope | default('pgclerk') }}
-    register: _uc_pause
-    changed_when: true
+    - name: Pause Patroni cluster-wide (no auto-failover during upgrade)
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
+          pause --wait {{ patroni_scope | default('pgclerk') }}
+      register: _uc_pause
+      changed_when: true
 
-  - name: Surface upgrade plan
-    ansible.builtin.debug:
-      msg:
-      - "Cluster upgrade plan"
-      - "  Current leader  : {{ _uc_leader }}"
-      - "  Replicas        : {{ _uc_replicas | join(', ') }}"
-      - "  Target version  : {{ upgrade_to_version }}"
-      - "  Patroni paused  : yes (no auto-failover until resume)"
+    - name: Surface upgrade plan
+      ansible.builtin.debug:
+        msg:
+          - Cluster upgrade plan
+          - "  Current leader  : {{ _uc_leader }}"
+          - "  Replicas        : {{ _uc_replicas | join(', ') }}"
+          - "  Target version  : {{ upgrade_to_version }}"
+          - "  Patroni paused  : yes (no auto-failover until resume)"
 
 # --- Upgrade each replica in turn ---------------------------------------
 
@@ -229,94 +229,94 @@
   serial: 1
   vars:
     upgrade_method: link
-    upgrade_skip_check: true  # already checked in pre-flight play
+    upgrade_skip_check: true # already checked in pre-flight play
     upgrade_keep_old: false
-    upgrade_analyze: false  # postpone until cluster is back
+    upgrade_analyze: false # postpone until cluster is back
   tasks:
-  - name: Stop patroni on replica
-    ansible.builtin.systemd:
-      name: patroni.service
-      state: stopped
+    - name: Stop patroni on replica
+      ansible.builtin.systemd:
+        name: patroni.service
+        state: stopped
 
-  - name: Resolve OS variant for include_vars
-    ansible.builtin.set_fact:
-      _uc_os_variant: >-
-        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
-           else ansible_facts['os_family'] }}
+    - name: Resolve OS variant for include_vars
+      ansible.builtin.set_fact:
+        _uc_os_variant: >-
+          {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+             else ansible_facts['os_family'] }}
 
-  - name: Load source-version PG paths
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
-      name: _uc_src_vars
+    - name: Load source-version PG paths
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
+        name: _uc_src_vars
 
-  - name: Load target-version PG paths
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
-      name: _uc_dst_vars
-    vars:
-      postgresql_version: "{{ upgrade_to_version }}"
+    - name: Load target-version PG paths
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
+        name: _uc_dst_vars
+      vars:
+        postgresql_version: "{{ upgrade_to_version }}"
 
-  - name: Start source PG so pg_upgrade can do a clean shutdown of it
-    ansible.builtin.systemd:
-      name: "{{ _uc_src_vars.postgresql_service }}"
-      state: started
-      enabled: false
+    - name: Start source PG so pg_upgrade can do a clean shutdown of it
+      ansible.builtin.systemd:
+        name: "{{ _uc_src_vars.postgresql_service }}"
+        state: started
+        enabled: false
 
-  - name: Wait briefly for the source PG to accept connections
-    ansible.builtin.wait_for:
-      host: 127.0.0.1
-      port: "{{ postgresql_port | default(5432) }}"
-      timeout: 60
+    - name: Wait briefly for the source PG to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ postgresql_port | default(5432) }}"
+        timeout: 60
 
-  - name: Read installed PG major version on replica
-    ansible.builtin.slurp:
-      src: "{{ _uc_src_vars.postgresql_data_dir }}/PG_VERSION"
-    register: _uc_pg_version_file
+    - name: Read installed PG major version on replica
+      ansible.builtin.slurp:
+        src: "{{ _uc_src_vars.postgresql_data_dir }}/PG_VERSION"
+      register: _uc_pg_version_file
 
-  - name: Compute source PG major version on replica
-    ansible.builtin.set_fact:
-      _uc_from_version: "{{ (_uc_pg_version_file.content | b64decode | trim).split('.')[0] }}"
+    - name: Compute source PG major version on replica
+      ansible.builtin.set_fact:
+        _uc_from_version: "{{ (_uc_pg_version_file.content | b64decode | trim).split('.')[0] }}"
 
-  - name: Stop source PG so pg_upgrade can run
-    ansible.builtin.systemd:
-      name: "{{ _uc_src_vars.postgresql_service }}"
-      state: stopped
+    - name: Stop source PG so pg_upgrade can run
+      ansible.builtin.systemd:
+        name: "{{ _uc_src_vars.postgresql_service }}"
+        state: stopped
 
-  - name: Run pg_upgrade
-    become: true
-    become_user: postgres
-    ansible.builtin.command:
-      argv: >-
-        {{ [
-             _uc_dst_vars.postgresql_bin_path ~ '/pg_upgrade',
-             '--old-bindir=' ~ _uc_src_vars.postgresql_bin_path,
-             '--new-bindir=' ~ _uc_dst_vars.postgresql_bin_path,
-             '--old-datadir=' ~ _uc_src_vars.postgresql_data_dir,
-             '--new-datadir=' ~ _uc_dst_vars.postgresql_data_dir,
-           ] + ([ '--link' ] if upgrade_method == 'link' else [ '--copy' ])
-        }}
-      chdir: "{{ _uc_dst_vars.postgresql_data_dir | dirname }}"
-    register: _uc_run
-    changed_when: true
+    - name: Run pg_upgrade
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv: >-
+          {{ [
+               _uc_dst_vars.postgresql_bin_path ~ '/pg_upgrade',
+               '--old-bindir=' ~ _uc_src_vars.postgresql_bin_path,
+               '--new-bindir=' ~ _uc_dst_vars.postgresql_bin_path,
+               '--old-datadir=' ~ _uc_src_vars.postgresql_data_dir,
+               '--new-datadir=' ~ _uc_dst_vars.postgresql_data_dir,
+             ] + ([ '--link' ] if upgrade_method == 'link' else [ '--copy' ])
+          }}
+        chdir: "{{ _uc_dst_vars.postgresql_data_dir | dirname }}"
+      register: _uc_run
+      changed_when: true
 
-  - name: Disable source PG service (Patroni will own the new one)
-    ansible.builtin.systemd:
-      name: "{{ _uc_src_vars.postgresql_service }}"
-      enabled: false
-      state: stopped
+    - name: Disable source PG service (Patroni will own the new one)
+      ansible.builtin.systemd:
+        name: "{{ _uc_src_vars.postgresql_service }}"
+        enabled: false
+        state: stopped
 
-  - name: Mask the new distro PG service (Patroni owns it)
-    ansible.builtin.systemd:
-      name: "{{ _uc_dst_vars.postgresql_service }}"
-      enabled: false
-      masked: true
-    failed_when: false
+    - name: Mask the new distro PG service (Patroni owns it)
+      ansible.builtin.systemd:
+        name: "{{ _uc_dst_vars.postgresql_service }}"
+        enabled: false
+        masked: true
+      failed_when: false
 
-  - name: Remove old data dir (link mode default)
-    ansible.builtin.file:
-      path: "{{ _uc_src_vars.postgresql_data_dir }}"
-      state: absent
-    when: upgrade_method == 'link' and not (upgrade_keep_old | bool)
+    - name: Remove old data dir (link mode default)
+      ansible.builtin.file:
+        path: "{{ _uc_src_vars.postgresql_data_dir }}"
+        state: absent
+      when: upgrade_method == 'link' and not (upgrade_keep_old | bool)
 
 # --- Upgrade the leader -------------------------------------------------
 
@@ -329,80 +329,80 @@
     upgrade_skip_check: true
     upgrade_keep_old: false
   tasks:
-  - name: Stop patroni on leader
-    ansible.builtin.systemd:
-      name: patroni.service
-      state: stopped
+    - name: Stop patroni on leader
+      ansible.builtin.systemd:
+        name: patroni.service
+        state: stopped
 
-  - name: Resolve OS variant for include_vars
-    ansible.builtin.set_fact:
-      _uc_os_variant: >-
-        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
-           else ansible_facts['os_family'] }}
+    - name: Resolve OS variant for include_vars
+      ansible.builtin.set_fact:
+        _uc_os_variant: >-
+          {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+             else ansible_facts['os_family'] }}
 
-  - name: Load source-version PG paths
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
-      name: _uc_src_vars
+    - name: Load source-version PG paths
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
+        name: _uc_src_vars
 
-  - name: Load target-version PG paths
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
-      name: _uc_dst_vars
-    vars:
-      postgresql_version: "{{ upgrade_to_version }}"
+    - name: Load target-version PG paths
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _uc_os_variant }}.yml"
+        name: _uc_dst_vars
+      vars:
+        postgresql_version: "{{ upgrade_to_version }}"
 
-  - name: Start source PG so pg_upgrade gets a clean shutdown
-    ansible.builtin.systemd:
-      name: "{{ _uc_src_vars.postgresql_service }}"
-      state: started
-      enabled: false
+    - name: Start source PG so pg_upgrade gets a clean shutdown
+      ansible.builtin.systemd:
+        name: "{{ _uc_src_vars.postgresql_service }}"
+        state: started
+        enabled: false
 
-  - name: Wait briefly for the source PG to accept connections
-    ansible.builtin.wait_for:
-      host: 127.0.0.1
-      port: "{{ postgresql_port | default(5432) }}"
-      timeout: 60
+    - name: Wait briefly for the source PG to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ postgresql_port | default(5432) }}"
+        timeout: 60
 
-  - name: Stop source PG so pg_upgrade can run
-    ansible.builtin.systemd:
-      name: "{{ _uc_src_vars.postgresql_service }}"
-      state: stopped
+    - name: Stop source PG so pg_upgrade can run
+      ansible.builtin.systemd:
+        name: "{{ _uc_src_vars.postgresql_service }}"
+        state: stopped
 
-  - name: Run pg_upgrade on leader
-    become: true
-    become_user: postgres
-    ansible.builtin.command:
-      argv: >-
-        {{ [
-             _uc_dst_vars.postgresql_bin_path ~ '/pg_upgrade',
-             '--old-bindir=' ~ _uc_src_vars.postgresql_bin_path,
-             '--new-bindir=' ~ _uc_dst_vars.postgresql_bin_path,
-             '--old-datadir=' ~ _uc_src_vars.postgresql_data_dir,
-             '--new-datadir=' ~ _uc_dst_vars.postgresql_data_dir,
-           ] + ([ '--link' ] if upgrade_method == 'link' else [ '--copy' ])
-        }}
-      chdir: "{{ _uc_dst_vars.postgresql_data_dir | dirname }}"
-    changed_when: true
+    - name: Run pg_upgrade on leader
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv: >-
+          {{ [
+               _uc_dst_vars.postgresql_bin_path ~ '/pg_upgrade',
+               '--old-bindir=' ~ _uc_src_vars.postgresql_bin_path,
+               '--new-bindir=' ~ _uc_dst_vars.postgresql_bin_path,
+               '--old-datadir=' ~ _uc_src_vars.postgresql_data_dir,
+               '--new-datadir=' ~ _uc_dst_vars.postgresql_data_dir,
+             ] + ([ '--link' ] if upgrade_method == 'link' else [ '--copy' ])
+          }}
+        chdir: "{{ _uc_dst_vars.postgresql_data_dir | dirname }}"
+      changed_when: true
 
-  - name: Disable old PG service on leader
-    ansible.builtin.systemd:
-      name: "{{ _uc_src_vars.postgresql_service }}"
-      enabled: false
-      state: stopped
+    - name: Disable old PG service on leader
+      ansible.builtin.systemd:
+        name: "{{ _uc_src_vars.postgresql_service }}"
+        enabled: false
+        state: stopped
 
-  - name: Mask new distro PG service on leader
-    ansible.builtin.systemd:
-      name: "{{ _uc_dst_vars.postgresql_service }}"
-      enabled: false
-      masked: true
-    failed_when: false
+    - name: Mask new distro PG service on leader
+      ansible.builtin.systemd:
+        name: "{{ _uc_dst_vars.postgresql_service }}"
+        enabled: false
+        masked: true
+      failed_when: false
 
-  - name: Remove old data dir on leader (link mode default)
-    ansible.builtin.file:
-      path: "{{ _uc_src_vars.postgresql_data_dir }}"
-      state: absent
-    when: upgrade_method == 'link' and not (upgrade_keep_old | bool)
+    - name: Remove old data dir on leader (link mode default)
+      ansible.builtin.file:
+        path: "{{ _uc_src_vars.postgresql_data_dir }}"
+        state: absent
+      when: upgrade_method == 'link' and not (upgrade_keep_old | bool)
 
 # --- Re-point Patroni at the new PG version + restart -------------------
 
@@ -411,11 +411,11 @@
   become: true
   gather_facts: true
   tasks:
-  - name: Apply patroni role with overridden postgresql_version
-    ansible.builtin.include_role:
-      name: patroni
-    vars:
-      postgresql_version: "{{ upgrade_to_version }}"
+    - name: Apply patroni role with overridden postgresql_version
+      ansible.builtin.include_role:
+        name: patroni
+      vars:
+        postgresql_version: "{{ upgrade_to_version }}"
 
 # --- Resume Patroni cluster-wide ----------------------------------------
 
@@ -424,95 +424,93 @@
   become: true
   gather_facts: false
   tasks:
-  - name: Resume Patroni cluster-wide
-    ansible.builtin.command:
-      cmd: >-
-        /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
-        resume --wait {{ patroni_scope | default('pgclerk') }}
-    register: _uc_resume
-    changed_when: true
+    - name: Resume Patroni cluster-wide
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
+          resume --wait {{ patroni_scope | default('pgclerk') }}
+      register: _uc_resume
+      changed_when: true
 
-  - name: Wait for the cluster to come back as N-member streaming
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
-    register: _uc_post
-    changed_when: false
-    failed_when: false
-    retries: 60
-    delay: 10
-    until:
-    - _uc_post.rc == 0
-    - (_uc_post.stdout | from_json | length) | int
-       >= ((groups['postgres_primary'] | default([])) + (groups['postgres_replicas'] | default([])) | unique | length)
-    - (_uc_post.stdout | from_json
-       | rejectattr('Role', 'in', ['Leader', 'Standby Leader'])
-       | rejectattr('State', 'in', ['streaming', 'running'])
-       | list | length) == 0
+    - name: Wait for the cluster to come back as N-member streaming
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+      register: _uc_post
+      changed_when: false
+      failed_when: false
+      retries: 60
+      delay: 10
+      until:
+        - _uc_post.rc == 0
+        - (_uc_post.stdout | from_json | length) | int >= ((groups['postgres_primary'] | default([])) + (groups['postgres_replicas'] | default([])) | unique | 
+          length)
+        - (_uc_post.stdout | from_json | rejectattr('Role', 'in', ['Leader', 'Standby Leader']) | rejectattr('State', 'in', ['streaming', 'running']) | list | 
+          length) == 0
 
-  - name: Show final topology
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
-    register: _uc_final
-    changed_when: false
+    - name: Show final topology
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
+      register: _uc_final
+      changed_when: false
 
-  - name: Display final topology
-    ansible.builtin.debug:
-      var: _uc_final.stdout_lines
+    - name: Display final topology
+      ansible.builtin.debug:
+        var: _uc_final.stdout_lines
 
 - name: Confirm new server_version on every node + run analyze
   hosts: postgres_servers
   become: true
   gather_facts: false
   tasks:
-  - name: Query server version
-    become: true
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SELECT version() AS server_version, current_setting('server_version_num') AS num"
-    register: _uc_version
+    - name: Query server version
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SELECT version() AS server_version, current_setting('server_version_num') AS num
+      register: _uc_version
 
-  - name: Assert server_version matches upgrade_to_version
-    ansible.builtin.assert:
-      that: (_uc_version.query_result | first).num | int >= ((upgrade_to_version | int) * 10000)
-      fail_msg: >-
-        Host {{ inventory_hostname }} reports server_version_num=
-        {{ (_uc_version.query_result | first).num }}, which is below the
-        expected {{ upgrade_to_version }}xxxx threshold.  Upgrade did not
-        complete on this host.
+    - name: Assert server_version matches upgrade_to_version
+      ansible.builtin.assert:
+        that: (_uc_version.query_result | first).num | int >= ((upgrade_to_version | int) * 10000)
+        fail_msg: >-
+          Host {{ inventory_hostname }} reports server_version_num=
+          {{ (_uc_version.query_result | first).num }}, which is below the
+          expected {{ upgrade_to_version }}xxxx threshold.  Upgrade did not
+          complete on this host.
 
-  - name: Run vacuumdb --all --analyze-in-stages on the leader only
-    become: true
-    become_user: postgres
-    ansible.builtin.command:
-      argv:
-      - vacuumdb
-      - "--all"
-      - "--analyze-in-stages"
-    when: inventory_hostname in (groups['_uc_current_leader'] | default([]))
-    changed_when: true
+    - name: Run vacuumdb --all --analyze-in-stages on the leader only
+      become: true
+      become_user: postgres
+      ansible.builtin.command:
+        argv:
+          - vacuumdb
+          - --all
+          - --analyze-in-stages
+      when: inventory_hostname in (groups['_uc_current_leader'] | default([]))
+      changed_when: true
 
-  - name: Surface per-node upgrade verdict
-    ansible.builtin.debug:
-      msg:
-      - "{{ inventory_hostname }}: {{ (_uc_version.query_result | first).server_version }}"
+    - name: Surface per-node upgrade verdict
+      ansible.builtin.debug:
+        msg:
+          - "{{ inventory_hostname }}: {{ (_uc_version.query_result | first).server_version }}"
 
 - name: Cluster upgrade verdict
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Surface final cluster upgrade verdict
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "Cluster upgrade complete -> PG {{ upgrade_to_version }}"
-      - "  Leader (pre-upgrade) : {{ (groups['_uc_current_leader'] | default(['?'])) | first }}"
-      - "  Replicas             : {{ (hostvars['_uc_facts'].uc_replicas | default([])) | join(', ') }}"
-      - ""
-      - "Follow-ups the operator should consider:"
-      - "  - Restart prometheus-postgres-exporter so its DSN reaches the"
-      - "    new cluster."
-      - "  - Confirm application / pgbouncer / HAProxy connectivity."
-      - "  - cumulative pg_stat_* counters were reset; expect noisy"
-      - "    dashboards for the next ~24h."
-      - "########################################################################"
+    - name: Surface final cluster upgrade verdict
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - Cluster upgrade complete -> PG {{ upgrade_to_version }}
+          - "  Leader (pre-upgrade) : {{ (groups['_uc_current_leader'] | default(['?'])) | first }}"
+          - "  Replicas             : {{ (hostvars['_uc_facts'].uc_replicas | default([])) | join(', ') }}"
+          - ""
+          - "Follow-ups the operator should consider:"
+          - "  - Restart prometheus-postgres-exporter so its DSN reaches the"
+          - "    new cluster."
+          - "  - Confirm application / pgbouncer / HAProxy connectivity."
+          - "  - cumulative pg_stat_* counters were reset; expect noisy"
+          - "    dashboards for the next ~24h."
+          - "########################################################################"

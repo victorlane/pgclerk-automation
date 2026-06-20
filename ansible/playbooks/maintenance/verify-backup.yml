@@ -48,48 +48,47 @@
   hosts: localhost
   gather_facts: true
   tasks:
-  - name: Assert topology is set
-    ansible.builtin.assert:
-      that:
-      - topology is defined
-      - topology in ['self-managed-vm-aws', 'self-managed-vm-gcp',
-                     'aws-rds', 'aws-aurora', 'cloudsql', 'alloydb']
-      fail_msg: "topology must be set to a known value."
+    - name: Assert topology is set
+      ansible.builtin.assert:
+        that:
+          - topology is defined
+          - topology in ['self-managed-vm-aws', 'self-managed-vm-gcp', 'aws-rds', 'aws-aurora', 'cloudsql', 'alloydb']
+        fail_msg: topology must be set to a known value.
 
-  # --- VM path: existing host-picking logic ------------------------------
-  - name: Assert verify_pg_version is defined (VM)
-    when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
-    ansible.builtin.assert:
-      that: verify_pg_version is defined
-      fail_msg: >-
-        verify_pg_version must be set for VM topologies (the PG major version
-        that took the backup -- 15 | 16 | 17 | 18). pgBackRest restore is
-        version-specific.
+    # --- VM path: existing host-picking logic ------------------------------
+    - name: Assert verify_pg_version is defined (VM)
+      when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+      ansible.builtin.assert:
+        that: verify_pg_version is defined
+        fail_msg: >-
+          verify_pg_version must be set for VM topologies (the PG major version
+          that took the backup -- 15 | 16 | 17 | 18). pgBackRest restore is
+          version-specific.
 
-  - name: Pick the verify host (replica preferred, else primary) -- VM
-    when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
-    ansible.builtin.set_fact:
-      _vfy_target: >-
-        {{ verify_host
-           | default((groups['postgres_replicas'] | default([]) | last) if (groups['postgres_replicas'] | default([])) | length > 0
-                    else (groups['postgres_primary'] | default([]) | first)) }}
+    - name: Pick the verify host (replica preferred, else primary) -- VM
+      when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+      ansible.builtin.set_fact:
+        _vfy_target: >-
+          {{ verify_host
+             | default((groups['postgres_replicas'] | default([]) | last) if (groups['postgres_replicas'] | default([])) | length > 0
+                      else (groups['postgres_primary'] | default([]) | first)) }}
 
-  - name: Assert verify host is in the inventory (VM)
-    when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
-    ansible.builtin.assert:
-      that:
-      - _vfy_target | default('') | length > 0
-      - _vfy_target in (groups['postgres_servers'] | default([]))
-      fail_msg: >-
-        Could not pick a verify host -- inventory has no postgres_replicas
-        or postgres_primary group with usable members. Pass verify_host=
-        <inventory_name> explicitly.
+    - name: Assert verify host is in the inventory (VM)
+      when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+      ansible.builtin.assert:
+        that:
+          - _vfy_target | default('') | length > 0
+          - _vfy_target in (groups['postgres_servers'] | default([]))
+        fail_msg: >-
+          Could not pick a verify host -- inventory has no postgres_replicas
+          or postgres_primary group with usable members. Pass verify_host=
+          <inventory_name> explicitly.
 
-  - name: Add verify host to a transient group (VM)
-    when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
-    ansible.builtin.add_host:
-      name: "{{ _vfy_target }}"
-      groups: _vfy_runner
+    - name: Add verify host to a transient group (VM)
+      when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+      ansible.builtin.add_host:
+        name: "{{ _vfy_target }}"
+        groups: _vfy_runner
 
 # ---------------------------------------------------------------------
 # VM topology path -- unchanged behaviour, gated by `when:` on every task.
@@ -100,230 +99,224 @@
   gather_facts: true
   vars:
     backup_stanza: main
-    verify_pg_path: "/var/lib/pgbackrest-verify/{{ backup_stanza }}/data"
+    verify_pg_path: /var/lib/pgbackrest-verify/{{ backup_stanza }}/data
     verify_pg_port: 5499
     verify_smoke_db: postgres
-    verify_smoke_query: "SELECT 1 AS one, version() AS server_version"
+    verify_smoke_query: SELECT 1 AS one, version() AS server_version
     verify_min_free_gib: 10
     verify_keep_instance: false
   tasks:
+    - name: Skip when topology is managed
+      when: topology not in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+      ansible.builtin.meta: end_play
 
-  - name: Skip when topology is managed
-    when: topology not in ['self-managed-vm-aws', 'self-managed-vm-gcp']
-    ansible.builtin.meta: end_play
+    - name: Resolve postgres role context for this OS
+      ansible.builtin.set_fact:
+        _vfy_os_variant: >-
+          {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+             else ansible_facts['os_family'] }}
 
-  - name: Resolve postgres role context for this OS
-    ansible.builtin.set_fact:
-      _vfy_os_variant: >-
-        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
-           else ansible_facts['os_family'] }}
+    - name: Resolve pg_ctl + initdb path for the verify instance
+      ansible.builtin.set_fact:
+        _vfy_pg_ctl: >-
+          {%- if _vfy_os_variant == 'Debian' -%} /usr/lib/postgresql/{{ verify_pg_version }}/bin/pg_ctl{%- elif _vfy_os_variant == 'Amazon' -%} /usr/bin/pg_ctl{%-
+          else -%} /usr/pgsql-{{ verify_pg_version }}/bin/pg_ctl{%- endif -%}
 
-  - name: Resolve pg_ctl + initdb path for the verify instance
-    ansible.builtin.set_fact:
-      _vfy_pg_ctl: >-
-        {%- if _vfy_os_variant == 'Debian' -%}
-        /usr/lib/postgresql/{{ verify_pg_version }}/bin/pg_ctl
-        {%- elif _vfy_os_variant == 'Amazon' -%}
-        /usr/bin/pg_ctl
-        {%- else -%}
-        /usr/pgsql-{{ verify_pg_version }}/bin/pg_ctl
-        {%- endif -%}
+    - name: Resolve the backup-server hostname / IP
+      ansible.builtin.set_fact:
+        _vfy_repo_host: >-
+          {{ hostvars[(groups['backup_servers'] | first)].ansible_host
+             | default(groups['backup_servers'] | first) }}
 
-  - name: Resolve the backup-server hostname / IP
-    ansible.builtin.set_fact:
-      _vfy_repo_host: >-
-        {{ hostvars[(groups['backup_servers'] | first)].ansible_host
-           | default(groups['backup_servers'] | first) }}
+    - name: Run pgbackrest info as JSON (via live config)
+      ansible.builtin.command: pgbackrest --stanza={{ backup_stanza }} --output=json info
+      become: true
+      become_user: postgres
+      register: _vfy_info_pre
+      changed_when: false
 
-  - name: Run pgbackrest info as JSON (via live config)
-    ansible.builtin.command: pgbackrest --stanza={{ backup_stanza }} --output=json info
-    become: true
-    become_user: postgres
-    register: _vfy_info_pre
-    changed_when: false
+    - name: Parse latest backup metadata
+      ansible.builtin.set_fact:
+        _vfy_latest_backup: >-
+          {{ (_vfy_info_pre.stdout | from_json | first).backup
+             | sort(attribute='timestamp.stop')
+             | last }}
 
-  - name: Parse latest backup metadata
-    ansible.builtin.set_fact:
-      _vfy_latest_backup: >-
-        {{ (_vfy_info_pre.stdout | from_json | first).backup
-           | sort(attribute='timestamp.stop')
-           | last }}
+    - name: Display the backup we're about to verify
+      ansible.builtin.debug:
+        msg:
+          - "Verify host    : {{ inventory_hostname }}"
+          - "Stanza         : {{ backup_stanza }}"
+          - "Backup label   : {{ _vfy_latest_backup.label }}"
+          - "Backup type    : {{ _vfy_latest_backup.type }}"
+          - "Started        : {{ '%Y-%m-%d %H:%M:%S UTC' | strftime(_vfy_latest_backup.timestamp.start) }}"
+          - "Stopped        : {{ '%Y-%m-%d %H:%M:%S UTC' | strftime(_vfy_latest_backup.timestamp.stop) }}"
+          - "Backup size    : {{ (_vfy_latest_backup.info.size / 1024 / 1024 / 1024) | round(2) }} GiB"
 
-  - name: Display the backup we're about to verify
-    ansible.builtin.debug:
-      msg:
-      - "Verify host    : {{ inventory_hostname }}"
-      - "Stanza         : {{ backup_stanza }}"
-      - "Backup label   : {{ _vfy_latest_backup.label }}"
-      - "Backup type    : {{ _vfy_latest_backup.type }}"
-      - "Started        : {{ '%Y-%m-%d %H:%M:%S UTC' | strftime(_vfy_latest_backup.timestamp.start) }}"
-      - "Stopped        : {{ '%Y-%m-%d %H:%M:%S UTC' | strftime(_vfy_latest_backup.timestamp.stop) }}"
-      - "Backup size    : {{ (_vfy_latest_backup.info.size / 1024 / 1024 / 1024) | round(2) }} GiB"
+    - name: Check free space on the verify-path filesystem
+      ansible.builtin.command: df -B1 --output=avail {{ verify_pg_path | dirname }}
+      register: _vfy_df
+      changed_when: false
+      failed_when: false
 
-  - name: Check free space on the verify-path filesystem
-    ansible.builtin.command: "df -B1 --output=avail {{ verify_pg_path | dirname }}"
-    register: _vfy_df
-    changed_when: false
-    failed_when: false
+    - name: Re-check free space on / if the verify path is new
+      ansible.builtin.command: df -B1 --output=avail /
+      register: _vfy_df_root
+      changed_when: false
+      when: _vfy_df.rc != 0
 
-  - name: Re-check free space on / if the verify path is new
-    ansible.builtin.command: "df -B1 --output=avail /"
-    register: _vfy_df_root
-    changed_when: false
-    when: _vfy_df.rc != 0
+    - name: Compute free-space figure
+      ansible.builtin.set_fact:
+        _vfy_free_bytes: >-
+          {{ ((_vfy_df.stdout_lines | default([]))[-1]
+              if _vfy_df.rc == 0
+              else (_vfy_df_root.stdout_lines)[-1])
+             | int }}
 
-  - name: Compute free-space figure
-    ansible.builtin.set_fact:
-      _vfy_free_bytes: >-
-        {{ ((_vfy_df.stdout_lines | default([]))[-1]
-            if _vfy_df.rc == 0
-            else (_vfy_df_root.stdout_lines)[-1])
-           | int }}
+    - name: Refuse to restore when free space < verify_min_free_gib
+      ansible.builtin.assert:
+        that: (_vfy_free_bytes | int) > (verify_min_free_gib | int * 1024 * 1024 * 1024)
+        fail_msg: >-
+          Only {{ (_vfy_free_bytes | int / 1024 / 1024 / 1024) | round(1) }}
+          GiB free on the verify path's filesystem; need at least
+          {{ verify_min_free_gib }} GiB.
 
-  - name: Refuse to restore when free space < verify_min_free_gib
-    ansible.builtin.assert:
-      that: (_vfy_free_bytes | int) > (verify_min_free_gib | int * 1024 * 1024 * 1024)
-      fail_msg: >-
-        Only {{ (_vfy_free_bytes | int / 1024 / 1024 / 1024) | round(1) }}
-        GiB free on the verify path's filesystem; need at least
-        {{ verify_min_free_gib }} GiB.
+    - name: Ensure verify_pg_path exists, owned by postgres
+      ansible.builtin.file:
+        path: "{{ verify_pg_path }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0700"
 
-  - name: Ensure verify_pg_path exists, owned by postgres
-    ansible.builtin.file:
-      path: "{{ verify_pg_path }}"
-      state: directory
-      owner: postgres
-      group: postgres
-      mode: "0700"
+    - name: Render verify-only pgbackrest config
+      ansible.builtin.copy:
+        dest: /etc/pgbackrest/pgbackrest-verify.conf
+        owner: postgres
+        group: postgres
+        mode: "0640"
+        content: |
+          # Generated by playbooks/maintenance/verify-backup.yml -- transient.
+          [global]
+          log-level-console=info
+          log-level-file=detail
+          log-path=/var/log/pgbackrest
+          repo1-type=posix
+          repo1-host={{ _vfy_repo_host }}
+          repo1-host-user=postgres
+          repo1-host-config-path=/etc/pgbackrest
+          repo1-path=/var/lib/pgbackrest
 
-  - name: Render verify-only pgbackrest config
-    ansible.builtin.copy:
-      dest: /etc/pgbackrest/pgbackrest-verify.conf
-      owner: postgres
-      group: postgres
-      mode: "0640"
-      content: |
-        # Generated by playbooks/maintenance/verify-backup.yml -- transient.
-        [global]
-        log-level-console=info
-        log-level-file=detail
-        log-path=/var/log/pgbackrest
-        repo1-type=posix
-        repo1-host={{ _vfy_repo_host }}
-        repo1-host-user=postgres
-        repo1-host-config-path=/etc/pgbackrest
-        repo1-path=/var/lib/pgbackrest
+          [{{ backup_stanza }}]
+          pg1-path={{ verify_pg_path }}
+          pg1-port={{ verify_pg_port }}
+          pg1-user=postgres
 
-        [{{ backup_stanza }}]
-        pg1-path={{ verify_pg_path }}
-        pg1-port={{ verify_pg_port }}
-        pg1-user=postgres
+    - name: Capture restore start time
+      ansible.builtin.set_fact:
+        _vfy_t0: "{{ ansible_facts['date_time']['iso8601'] }}"
 
-  - name: Capture restore start time
-    ansible.builtin.set_fact:
-      _vfy_t0: "{{ ansible_facts['date_time']['iso8601'] }}"
+    - name: Restore latest backup into verify path
+      ansible.builtin.command: >
+        pgbackrest --config=/etc/pgbackrest/pgbackrest-verify.conf
+          --stanza={{ backup_stanza }}
+          --pg1-path={{ verify_pg_path }}
+          --delta
+          --type=default
+          restore
+      become: true
+      become_user: postgres
+      register: _vfy_restore
+      changed_when: true
 
-  - name: Restore latest backup into verify path
-    ansible.builtin.command: >
-      pgbackrest --config=/etc/pgbackrest/pgbackrest-verify.conf
-        --stanza={{ backup_stanza }}
-        --pg1-path={{ verify_pg_path }}
-        --delta
-        --type=default
-        restore
-    become: true
-    become_user: postgres
-    register: _vfy_restore
-    changed_when: true
+    - name: Capture restore stop time
+      ansible.builtin.set_fact:
+        _vfy_t1: "{{ ansible_facts['date_time']['iso8601'] }}"
 
-  - name: Capture restore stop time
-    ansible.builtin.set_fact:
-      _vfy_t1: "{{ ansible_facts['date_time']['iso8601'] }}"
+    - name: Patch postgresql.auto.conf to neutralise archive_command + port
+      ansible.builtin.lineinfile:
+        path: "{{ verify_pg_path }}/postgresql.auto.conf"
+        line: "{{ item }}"
+        create: true
+        owner: postgres
+        group: postgres
+        mode: "0600"
+        regexp: ^{{ item.split('=')[0] | trim }}\s*=
+      loop:
+        - archive_command = ''
+        - archive_mode = 'off'
+        - port = {{ verify_pg_port }}
+        - listen_addresses = 'localhost'
+        - cluster_name = 'pgbackrest-verify-{{ backup_stanza }}'
+        - unix_socket_directories = '{{ verify_pg_path }}'
 
-  - name: Patch postgresql.auto.conf to neutralise archive_command + port
-    ansible.builtin.lineinfile:
-      path: "{{ verify_pg_path }}/postgresql.auto.conf"
-      line: "{{ item }}"
-      create: true
-      owner: postgres
-      group: postgres
-      mode: "0600"
-      regexp: "^{{ item.split('=')[0] | trim }}\\s*="
-    loop:
-    - "archive_command = ''"
-    - "archive_mode = 'off'"
-    - "port = {{ verify_pg_port }}"
-    - "listen_addresses = 'localhost'"
-    - "cluster_name = 'pgbackrest-verify-{{ backup_stanza }}'"
-    - "unix_socket_directories = '{{ verify_pg_path }}'"
+    - name: Start verify PG instance
+      ansible.builtin.command: >
+        {{ _vfy_pg_ctl }} -D {{ verify_pg_path }} -l {{ verify_pg_path }}/verify.log
+          -w -t 60
+          start
+      become: true
+      become_user: postgres
+      register: _vfy_start
+      changed_when: true
 
-  - name: Start verify PG instance
-    ansible.builtin.command: >
-      {{ _vfy_pg_ctl }} -D {{ verify_pg_path }} -l {{ verify_pg_path }}/verify.log
-        -w -t 60
-        start
-    become: true
-    become_user: postgres
-    register: _vfy_start
-    changed_when: true
+    - name: Wait for the verify instance to accept queries
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ verify_pg_port }}"
+        timeout: 60
 
-  - name: Wait for the verify instance to accept queries
-    ansible.builtin.wait_for:
-      host: 127.0.0.1
-      port: "{{ verify_pg_port }}"
-      timeout: 60
+    - name: Run smoke query against the verify instance
+      community.postgresql.postgresql_query:
+        login_unix_socket: "{{ verify_pg_path }}"
+        port: "{{ verify_pg_port }}"
+        db: "{{ verify_smoke_db }}"
+        query: "{{ verify_smoke_query }}"
+      become: true
+      become_user: postgres
+      register: _vfy_smoke
 
-  - name: Run smoke query against the verify instance
-    community.postgresql.postgresql_query:
-      login_unix_socket: "{{ verify_pg_path }}"
-      port: "{{ verify_pg_port }}"
-      db: "{{ verify_smoke_db }}"
-      query: "{{ verify_smoke_query }}"
-    become: true
-    become_user: postgres
-    register: _vfy_smoke
+    - name: Verify smoke query returned a row
+      ansible.builtin.assert:
+        that: (_vfy_smoke.query_result | default([])) | length > 0
+        fail_msg: >-
+          Smoke query returned no rows; the restore mounted but PG isn't
+          usable. Inspect {{ verify_pg_path }}/verify.log on
+          {{ inventory_hostname }} for details.
 
-  - name: Verify smoke query returned a row
-    ansible.builtin.assert:
-      that: (_vfy_smoke.query_result | default([])) | length > 0
-      fail_msg: >-
-        Smoke query returned no rows; the restore mounted but PG isn't
-        usable. Inspect {{ verify_pg_path }}/verify.log on
-        {{ inventory_hostname }} for details.
+    - name: Stop verify PG instance
+      ansible.builtin.command: >
+        {{ _vfy_pg_ctl }} -D {{ verify_pg_path }} -m fast -w -t 60 stop
+      become: true
+      become_user: postgres
+      when: not (verify_keep_instance | bool)
+      changed_when: true
 
-  - name: Stop verify PG instance
-    ansible.builtin.command: >
-      {{ _vfy_pg_ctl }} -D {{ verify_pg_path }} -m fast -w -t 60 stop
-    become: true
-    become_user: postgres
-    when: not (verify_keep_instance | bool)
-    changed_when: true
+    - name: Remove verify data dir
+      ansible.builtin.file:
+        path: "{{ verify_pg_path }}"
+        state: absent
+      when: not (verify_keep_instance | bool)
 
-  - name: Remove verify data dir
-    ansible.builtin.file:
-      path: "{{ verify_pg_path }}"
-      state: absent
-    when: not (verify_keep_instance | bool)
+    - name: Remove transient pgbackrest-verify config
+      ansible.builtin.file:
+        path: /etc/pgbackrest/pgbackrest-verify.conf
+        state: absent
+      when: not (verify_keep_instance | bool)
 
-  - name: Remove transient pgbackrest-verify config
-    ansible.builtin.file:
-      path: /etc/pgbackrest/pgbackrest-verify.conf
-      state: absent
-    when: not (verify_keep_instance | bool)
-
-  - name: Surface verification verdict (VM)
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "pgBackRest restore verified for stanza '{{ backup_stanza }}'"
-      - "  Verify host   : {{ inventory_hostname }}"
-      - "  Backup label  : {{ _vfy_latest_backup.label }}"
-      - "  Restore start : {{ _vfy_t0 }}"
-      - "  Restore stop  : {{ _vfy_t1 }}"
-      - "  Smoke query   : {{ verify_smoke_query }}"
-      - "  First row     : {{ (_vfy_smoke.query_result | default([{}])) | first }}"
-      - "  Instance kept : {{ verify_keep_instance | bool }}"
-      - "########################################################################"
+    - name: Surface verification verdict (VM)
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - pgBackRest restore verified for stanza '{{ backup_stanza }}'
+          - "  Verify host   : {{ inventory_hostname }}"
+          - "  Backup label  : {{ _vfy_latest_backup.label }}"
+          - "  Restore start : {{ _vfy_t0 }}"
+          - "  Restore stop  : {{ _vfy_t1 }}"
+          - "  Smoke query   : {{ verify_smoke_query }}"
+          - "  First row     : {{ (_vfy_smoke.query_result | default([{}])) | first }}"
+          - "  Instance kept : {{ verify_keep_instance | bool }}"
+          - "########################################################################"
 
 # ---------------------------------------------------------------------
 # Managed topologies -- everything runs on localhost using cloud CLIs.
@@ -333,379 +326,379 @@
   gather_facts: true
   vars:
     verify_smoke_db: postgres
-    verify_smoke_query: "SELECT COUNT(*) FROM pg_tables WHERE schemaname='public'"
+    verify_smoke_query: SELECT COUNT(*) FROM pg_tables WHERE schemaname='public'
     verify_sql: ""
     verify_keep_instance: false
   tasks:
-  - name: Skip when topology is VM
-    when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
-    ansible.builtin.meta: end_play
+    - name: Skip when topology is VM
+      when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+      ansible.builtin.meta: end_play
 
-  - name: Assert managed vars
-    ansible.builtin.assert:
-      that:
-      - cloud_region is defined
-      - managed_instance_id is defined
-      fail_msg: "cloud_region and managed_instance_id are required."
+    - name: Assert managed vars
+      ansible.builtin.assert:
+        that:
+          - cloud_region is defined
+          - managed_instance_id is defined
+        fail_msg: cloud_region and managed_instance_id are required.
 
-  - name: Compose throwaway identifier
-    ansible.builtin.set_fact:
-      _vfy_throwaway_id: "{{ managed_instance_id }}-verify-{{ ansible_date_time.iso8601_basic_short | regex_replace('[^0-9A-Za-z]', '') }}"
+    - name: Compose throwaway identifier
+      ansible.builtin.set_fact:
+        _vfy_throwaway_id: "{{ managed_instance_id }}-verify-{{ ansible_date_time.iso8601_basic_short | regex_replace('[^0-9A-Za-z]', '') }}"
 
-  - name: Capture restore start time
-    ansible.builtin.set_fact:
-      _vfy_mgd_t0: "{{ ansible_date_time.iso8601 }}"
+    - name: Capture restore start time
+      ansible.builtin.set_fact:
+        _vfy_mgd_t0: "{{ ansible_date_time.iso8601 }}"
 
-  # ---- AWS RDS -----------------------------------------------------------
-  - name: Find latest RDS snapshot
-    when: topology == 'aws-rds'
-    amazon.aws.rds_snapshot_info:
-      db_instance_identifier: "{{ managed_instance_id }}"
-      region: "{{ cloud_region }}"
-    register: _rds_snaps
+    # ---- AWS RDS -----------------------------------------------------------
+    - name: Find latest RDS snapshot
+      when: topology == 'aws-rds'
+      amazon.aws.rds_snapshot_info:
+        db_instance_identifier: "{{ managed_instance_id }}"
+        region: "{{ cloud_region }}"
+      register: _rds_snaps
 
-  - name: Resolve latest RDS snapshot ID
-    when: topology == 'aws-rds'
-    ansible.builtin.set_fact:
-      _rds_latest_snap: >-
-        {{ (_rds_snaps.snapshots | sort(attribute='snapshot_create_time') | last).db_snapshot_identifier }}
+    - name: Resolve latest RDS snapshot ID
+      when: topology == 'aws-rds'
+      ansible.builtin.set_fact:
+        _rds_latest_snap: >-
+          {{ (_rds_snaps.snapshots | sort(attribute='snapshot_create_time') | last).db_snapshot_identifier }}
 
-  - name: Restore RDS snapshot into throwaway instance
-    when: topology == 'aws-rds'
-    ansible.builtin.command: >-
-      aws rds restore-db-instance-from-db-snapshot
-        --region {{ cloud_region }}
-        --db-instance-identifier {{ _vfy_throwaway_id }}
-        --db-snapshot-identifier {{ _rds_latest_snap }}
-    register: _rds_restore
-    changed_when: _rds_restore.rc == 0
+    - name: Restore RDS snapshot into throwaway instance
+      when: topology == 'aws-rds'
+      ansible.builtin.command: >-
+        aws rds restore-db-instance-from-db-snapshot
+          --region {{ cloud_region }}
+          --db-instance-identifier {{ _vfy_throwaway_id }}
+          --db-snapshot-identifier {{ _rds_latest_snap }}
+      register: _rds_restore
+      changed_when: _rds_restore.rc == 0
 
-  - name: Wait until throwaway RDS instance is available
-    when: topology == 'aws-rds'
-    ansible.builtin.command: >-
-      aws rds wait db-instance-available
-        --region {{ cloud_region }}
-        --db-instance-identifier {{ _vfy_throwaway_id }}
-    changed_when: false
+    - name: Wait until throwaway RDS instance is available
+      when: topology == 'aws-rds'
+      ansible.builtin.command: >-
+        aws rds wait db-instance-available
+          --region {{ cloud_region }}
+          --db-instance-identifier {{ _vfy_throwaway_id }}
+      changed_when: false
 
-  - name: Describe throwaway RDS instance to get endpoint
-    when: topology == 'aws-rds'
-    ansible.builtin.command: >-
-      aws rds describe-db-instances
-        --region {{ cloud_region }}
-        --db-instance-identifier {{ _vfy_throwaway_id }}
-    register: _rds_descr
-    changed_when: false
+    - name: Describe throwaway RDS instance to get endpoint
+      when: topology == 'aws-rds'
+      ansible.builtin.command: >-
+        aws rds describe-db-instances
+          --region {{ cloud_region }}
+          --db-instance-identifier {{ _vfy_throwaway_id }}
+      register: _rds_descr
+      changed_when: false
 
-  - name: Extract RDS throwaway endpoint
-    when: topology == 'aws-rds'
-    ansible.builtin.set_fact:
-      _vfy_mgd_endpoint: "{{ (_rds_descr.stdout | from_json).DBInstances[0].Endpoint.Address }}"
+    - name: Extract RDS throwaway endpoint
+      when: topology == 'aws-rds'
+      ansible.builtin.set_fact:
+        _vfy_mgd_endpoint: "{{ (_rds_descr.stdout | from_json).DBInstances[0].Endpoint.Address }}"
 
-  # ---- AWS Aurora --------------------------------------------------------
-  - name: Find latest Aurora cluster snapshot
-    when: topology == 'aws-aurora'
-    ansible.builtin.command: >-
-      aws rds describe-db-cluster-snapshots
-        --region {{ cloud_region }}
-        --db-cluster-identifier {{ managed_instance_id }}
-    register: _aurora_snaps_raw
-    changed_when: false
+    # ---- AWS Aurora --------------------------------------------------------
+    - name: Find latest Aurora cluster snapshot
+      when: topology == 'aws-aurora'
+      ansible.builtin.command: >-
+        aws rds describe-db-cluster-snapshots
+          --region {{ cloud_region }}
+          --db-cluster-identifier {{ managed_instance_id }}
+      register: _aurora_snaps_raw
+      changed_when: false
 
-  - name: Resolve latest Aurora snapshot ID
-    when: topology == 'aws-aurora'
-    ansible.builtin.set_fact:
-      _aurora_latest_snap: >-
-        {{ ((_aurora_snaps_raw.stdout | from_json).DBClusterSnapshots
-            | sort(attribute='SnapshotCreateTime') | last).DBClusterSnapshotIdentifier }}
+    - name: Resolve latest Aurora snapshot ID
+      when: topology == 'aws-aurora'
+      ansible.builtin.set_fact:
+        _aurora_latest_snap: >-
+          {{ ((_aurora_snaps_raw.stdout | from_json).DBClusterSnapshots
+              | sort(attribute='SnapshotCreateTime') | last).DBClusterSnapshotIdentifier }}
 
-  - name: Restore Aurora cluster from snapshot
-    when: topology == 'aws-aurora'
-    ansible.builtin.command: >-
-      aws rds restore-db-cluster-from-snapshot
-        --region {{ cloud_region }}
-        --db-cluster-identifier {{ _vfy_throwaway_id }}
-        --snapshot-identifier {{ _aurora_latest_snap }}
-        --engine aurora-postgresql
-    register: _aurora_restore
-    changed_when: _aurora_restore.rc == 0
+    - name: Restore Aurora cluster from snapshot
+      when: topology == 'aws-aurora'
+      ansible.builtin.command: >-
+        aws rds restore-db-cluster-from-snapshot
+          --region {{ cloud_region }}
+          --db-cluster-identifier {{ _vfy_throwaway_id }}
+          --snapshot-identifier {{ _aurora_latest_snap }}
+          --engine aurora-postgresql
+      register: _aurora_restore
+      changed_when: _aurora_restore.rc == 0
 
-  - name: Create Aurora cluster instance for the throwaway
-    when: topology == 'aws-aurora'
-    ansible.builtin.command: >-
-      aws rds create-db-instance
-        --region {{ cloud_region }}
-        --db-instance-identifier {{ _vfy_throwaway_id }}-i1
-        --db-cluster-identifier {{ _vfy_throwaway_id }}
-        --db-instance-class db.r6g.large
-        --engine aurora-postgresql
-    register: _aurora_inst
-    changed_when: _aurora_inst.rc == 0
+    - name: Create Aurora cluster instance for the throwaway
+      when: topology == 'aws-aurora'
+      ansible.builtin.command: >-
+        aws rds create-db-instance
+          --region {{ cloud_region }}
+          --db-instance-identifier {{ _vfy_throwaway_id }}-i1
+          --db-cluster-identifier {{ _vfy_throwaway_id }}
+          --db-instance-class db.r6g.large
+          --engine aurora-postgresql
+      register: _aurora_inst
+      changed_when: _aurora_inst.rc == 0
 
-  - name: Wait until Aurora throwaway instance is available
-    when: topology == 'aws-aurora'
-    ansible.builtin.command: >-
-      aws rds wait db-instance-available
-        --region {{ cloud_region }}
-        --db-instance-identifier {{ _vfy_throwaway_id }}-i1
-    changed_when: false
+    - name: Wait until Aurora throwaway instance is available
+      when: topology == 'aws-aurora'
+      ansible.builtin.command: >-
+        aws rds wait db-instance-available
+          --region {{ cloud_region }}
+          --db-instance-identifier {{ _vfy_throwaway_id }}-i1
+      changed_when: false
 
-  - name: Describe Aurora throwaway cluster to get endpoint
-    when: topology == 'aws-aurora'
-    ansible.builtin.command: >-
-      aws rds describe-db-clusters
-        --region {{ cloud_region }}
-        --db-cluster-identifier {{ _vfy_throwaway_id }}
-    register: _aurora_descr
-    changed_when: false
+    - name: Describe Aurora throwaway cluster to get endpoint
+      when: topology == 'aws-aurora'
+      ansible.builtin.command: >-
+        aws rds describe-db-clusters
+          --region {{ cloud_region }}
+          --db-cluster-identifier {{ _vfy_throwaway_id }}
+      register: _aurora_descr
+      changed_when: false
 
-  - name: Extract Aurora throwaway endpoint
-    when: topology == 'aws-aurora'
-    ansible.builtin.set_fact:
-      _vfy_mgd_endpoint: "{{ (_aurora_descr.stdout | from_json).DBClusters[0].Endpoint }}"
+    - name: Extract Aurora throwaway endpoint
+      when: topology == 'aws-aurora'
+      ansible.builtin.set_fact:
+        _vfy_mgd_endpoint: "{{ (_aurora_descr.stdout | from_json).DBClusters[0].Endpoint }}"
 
-  # ---- CloudSQL ----------------------------------------------------------
-  - name: List CloudSQL backups (newest first)
-    when: topology == 'cloudsql'
-    ansible.builtin.command: >-
-      gcloud sql backups list
-        --project {{ cloud_project }}
-        --instance {{ managed_instance_id }}
-        --sort-by ~windowStartTime
-        --limit 1
-        --format json
-    register: _cs_backups_raw
-    changed_when: false
+    # ---- CloudSQL ----------------------------------------------------------
+    - name: List CloudSQL backups (newest first)
+      when: topology == 'cloudsql'
+      ansible.builtin.command: >-
+        gcloud sql backups list
+          --project {{ cloud_project }}
+          --instance {{ managed_instance_id }}
+          --sort-by ~windowStartTime
+          --limit 1
+          --format json
+      register: _cs_backups_raw
+      changed_when: false
 
-  - name: Resolve latest CloudSQL backup ID
-    when: topology == 'cloudsql'
-    ansible.builtin.set_fact:
-      _cs_latest_backup: "{{ (_cs_backups_raw.stdout | from_json | first).id }}"
+    - name: Resolve latest CloudSQL backup ID
+      when: topology == 'cloudsql'
+      ansible.builtin.set_fact:
+        _cs_latest_backup: "{{ (_cs_backups_raw.stdout | from_json | first).id }}"
 
-  - name: Create throwaway CloudSQL instance (clone of source)
-    when: topology == 'cloudsql'
-    ansible.builtin.command: >-
-      gcloud sql instances clone {{ managed_instance_id }} {{ _vfy_throwaway_id }}
-        --project {{ cloud_project }}
-    register: _cs_clone
-    changed_when: _cs_clone.rc == 0
+    - name: Create throwaway CloudSQL instance (clone of source)
+      when: topology == 'cloudsql'
+      ansible.builtin.command: >-
+        gcloud sql instances clone {{ managed_instance_id }} {{ _vfy_throwaway_id }}
+          --project {{ cloud_project }}
+      register: _cs_clone
+      changed_when: _cs_clone.rc == 0
 
-  - name: Restore latest backup into throwaway CloudSQL instance
-    when: topology == 'cloudsql'
-    ansible.builtin.command: >-
-      gcloud sql backups restore {{ _cs_latest_backup }}
-        --project {{ cloud_project }}
-        --restore-instance {{ _vfy_throwaway_id }}
-        --backup-instance {{ managed_instance_id }}
-        --quiet
-    register: _cs_restore
-    changed_when: _cs_restore.rc == 0
+    - name: Restore latest backup into throwaway CloudSQL instance
+      when: topology == 'cloudsql'
+      ansible.builtin.command: >-
+        gcloud sql backups restore {{ _cs_latest_backup }}
+          --project {{ cloud_project }}
+          --restore-instance {{ _vfy_throwaway_id }}
+          --backup-instance {{ managed_instance_id }}
+          --quiet
+      register: _cs_restore
+      changed_when: _cs_restore.rc == 0
 
-  - name: Describe CloudSQL throwaway to get IP
-    when: topology == 'cloudsql'
-    ansible.builtin.command: >-
-      gcloud sql instances describe {{ _vfy_throwaway_id }}
-        --project {{ cloud_project }}
-        --format json
-    register: _cs_descr
-    changed_when: false
+    - name: Describe CloudSQL throwaway to get IP
+      when: topology == 'cloudsql'
+      ansible.builtin.command: >-
+        gcloud sql instances describe {{ _vfy_throwaway_id }}
+          --project {{ cloud_project }}
+          --format json
+      register: _cs_descr
+      changed_when: false
 
-  - name: Extract CloudSQL throwaway endpoint
-    when: topology == 'cloudsql'
-    ansible.builtin.set_fact:
-      _vfy_mgd_endpoint: >-
-        {{ ((_cs_descr.stdout | from_json).ipAddresses
-            | selectattr('type', 'equalto', 'PRIMARY') | first).ipAddress }}
+    - name: Extract CloudSQL throwaway endpoint
+      when: topology == 'cloudsql'
+      ansible.builtin.set_fact:
+        _vfy_mgd_endpoint: >-
+          {{ ((_cs_descr.stdout | from_json).ipAddresses
+              | selectattr('type', 'equalto', 'PRIMARY') | first).ipAddress }}
 
-  # ---- AlloyDB ----------------------------------------------------------
-  - name: List AlloyDB backups
-    when: topology == 'alloydb'
-    ansible.builtin.command: >-
-      gcloud alloydb backups list
-        --project {{ cloud_project }}
-        --region {{ cloud_region }}
-        --filter clusterName~{{ managed_instance_id }}$
-        --sort-by ~createTime
-        --limit 1
-        --format json
-    register: _alloydb_backups_raw
-    changed_when: false
+    # ---- AlloyDB ----------------------------------------------------------
+    - name: List AlloyDB backups
+      when: topology == 'alloydb'
+      ansible.builtin.command: >-
+        gcloud alloydb backups list
+          --project {{ cloud_project }}
+          --region {{ cloud_region }}
+          --filter clusterName~{{ managed_instance_id }}$
+          --sort-by ~createTime
+          --limit 1
+          --format json
+      register: _alloydb_backups_raw
+      changed_when: false
 
-  - name: Resolve latest AlloyDB backup name
-    when: topology == 'alloydb'
-    ansible.builtin.set_fact:
-      _alloydb_latest_backup: "{{ (_alloydb_backups_raw.stdout | from_json | first).name }}"
+    - name: Resolve latest AlloyDB backup name
+      when: topology == 'alloydb'
+      ansible.builtin.set_fact:
+        _alloydb_latest_backup: "{{ (_alloydb_backups_raw.stdout | from_json | first).name }}"
 
-  - name: Restore AlloyDB cluster from latest backup
-    when: topology == 'alloydb'
-    ansible.builtin.command: >-
-      gcloud alloydb clusters restore {{ _vfy_throwaway_id }}
-        --project {{ cloud_project }}
-        --region {{ cloud_region }}
-        --backup {{ _alloydb_latest_backup }}
-    register: _alloydb_restore
-    changed_when: _alloydb_restore.rc == 0
+    - name: Restore AlloyDB cluster from latest backup
+      when: topology == 'alloydb'
+      ansible.builtin.command: >-
+        gcloud alloydb clusters restore {{ _vfy_throwaway_id }}
+          --project {{ cloud_project }}
+          --region {{ cloud_region }}
+          --backup {{ _alloydb_latest_backup }}
+      register: _alloydb_restore
+      changed_when: _alloydb_restore.rc == 0
 
-  - name: Create primary instance on the throwaway AlloyDB cluster
-    when: topology == 'alloydb'
-    ansible.builtin.command: >-
-      gcloud alloydb instances create {{ _vfy_throwaway_id }}-i1
-        --project {{ cloud_project }}
-        --region {{ cloud_region }}
-        --cluster {{ _vfy_throwaway_id }}
-        --instance-type PRIMARY
-        --cpu-count 2
-    register: _alloydb_inst
-    changed_when: _alloydb_inst.rc == 0
+    - name: Create primary instance on the throwaway AlloyDB cluster
+      when: topology == 'alloydb'
+      ansible.builtin.command: >-
+        gcloud alloydb instances create {{ _vfy_throwaway_id }}-i1
+          --project {{ cloud_project }}
+          --region {{ cloud_region }}
+          --cluster {{ _vfy_throwaway_id }}
+          --instance-type PRIMARY
+          --cpu-count 2
+      register: _alloydb_inst
+      changed_when: _alloydb_inst.rc == 0
 
-  - name: Describe AlloyDB throwaway instance for endpoint
-    when: topology == 'alloydb'
-    ansible.builtin.command: >-
-      gcloud alloydb instances describe {{ _vfy_throwaway_id }}-i1
-        --project {{ cloud_project }}
-        --region {{ cloud_region }}
-        --cluster {{ _vfy_throwaway_id }}
-        --format json
-    register: _alloydb_descr
-    changed_when: false
+    - name: Describe AlloyDB throwaway instance for endpoint
+      when: topology == 'alloydb'
+      ansible.builtin.command: >-
+        gcloud alloydb instances describe {{ _vfy_throwaway_id }}-i1
+          --project {{ cloud_project }}
+          --region {{ cloud_region }}
+          --cluster {{ _vfy_throwaway_id }}
+          --format json
+      register: _alloydb_descr
+      changed_when: false
 
-  - name: Extract AlloyDB throwaway endpoint
-    when: topology == 'alloydb'
-    ansible.builtin.set_fact:
-      _vfy_mgd_endpoint: "{{ (_alloydb_descr.stdout | from_json).ipAddress }}"
+    - name: Extract AlloyDB throwaway endpoint
+      when: topology == 'alloydb'
+      ansible.builtin.set_fact:
+        _vfy_mgd_endpoint: "{{ (_alloydb_descr.stdout | from_json).ipAddress }}"
 
-  # ---- Smoke SQL (all managed) ------------------------------------------
-  - name: Look up master credentials (AWS)
-    when: topology in ['aws-rds', 'aws-aurora']
-    ansible.builtin.set_fact:
-      _vfy_creds: >-
-        {{ lookup('amazon.aws.aws_secret',
-                  master_credential_secret_arn,
-                  region=cloud_region) | from_json }}
-    no_log: true
+    # ---- Smoke SQL (all managed) ------------------------------------------
+    - name: Look up master credentials (AWS)
+      when: topology in ['aws-rds', 'aws-aurora']
+      ansible.builtin.set_fact:
+        _vfy_creds: >-
+          {{ lookup('amazon.aws.aws_secret',
+                    master_credential_secret_arn,
+                    region=cloud_region) | from_json }}
+      no_log: true
 
-  - name: Look up master credentials (GCP)
-    when: topology in ['cloudsql', 'alloydb']
-    google.cloud.gcp_secret_manager:
-      name: "{{ master_credential_secret_id }}"
-      project: "{{ cloud_project }}"
-      auth_kind: application
-    register: _vfy_gcp_secret
-    no_log: true
+    - name: Look up master credentials (GCP)
+      when: topology in ['cloudsql', 'alloydb']
+      google.cloud.gcp_secret_manager:
+        name: "{{ master_credential_secret_id }}"
+        project: "{{ cloud_project }}"
+        auth_kind: application
+      register: _vfy_gcp_secret
+      no_log: true
 
-  - name: Parse GCP credentials JSON
-    when: topology in ['cloudsql', 'alloydb']
-    ansible.builtin.set_fact:
-      _vfy_creds: "{{ _vfy_gcp_secret.value | from_json }}"
-    no_log: true
+    - name: Parse GCP credentials JSON
+      when: topology in ['cloudsql', 'alloydb']
+      ansible.builtin.set_fact:
+        _vfy_creds: "{{ _vfy_gcp_secret.value | from_json }}"
+      no_log: true
 
-  - name: Run smoke query against throwaway endpoint
-    community.postgresql.postgresql_query:
-      login_host: "{{ _vfy_mgd_endpoint }}"
-      login_user: "{{ _vfy_creds.username }}"
-      login_password: "{{ _vfy_creds.password }}"
-      db: "{{ verify_smoke_db }}"
-      query: "{{ verify_smoke_query }}"
-    register: _vfy_mgd_smoke
-    no_log: true
+    - name: Run smoke query against throwaway endpoint
+      community.postgresql.postgresql_query:
+        login_host: "{{ _vfy_mgd_endpoint }}"
+        login_user: "{{ _vfy_creds.username }}"
+        login_password: "{{ _vfy_creds.password }}"
+        db: "{{ verify_smoke_db }}"
+        query: "{{ verify_smoke_query }}"
+      register: _vfy_mgd_smoke
+      no_log: true
 
-  - name: Run customer-supplied verify_sql (optional)
-    when: verify_sql | length > 0
-    community.postgresql.postgresql_query:
-      login_host: "{{ _vfy_mgd_endpoint }}"
-      login_user: "{{ _vfy_creds.username }}"
-      login_password: "{{ _vfy_creds.password }}"
-      db: "{{ verify_smoke_db }}"
-      query: "{{ verify_sql }}"
-    register: _vfy_mgd_custom
-    no_log: true
+    - name: Run customer-supplied verify_sql (optional)
+      when: verify_sql | length > 0
+      community.postgresql.postgresql_query:
+        login_host: "{{ _vfy_mgd_endpoint }}"
+        login_user: "{{ _vfy_creds.username }}"
+        login_password: "{{ _vfy_creds.password }}"
+        db: "{{ verify_smoke_db }}"
+        query: "{{ verify_sql }}"
+      register: _vfy_mgd_custom
+      no_log: true
 
-  - name: Capture restore stop time
-    ansible.builtin.set_fact:
-      _vfy_mgd_t1: "{{ ansible_date_time.iso8601 }}"
+    - name: Capture restore stop time
+      ansible.builtin.set_fact:
+        _vfy_mgd_t1: "{{ ansible_date_time.iso8601 }}"
 
-  - name: Verify smoke query returned a row
-    ansible.builtin.assert:
-      that: (_vfy_mgd_smoke.query_result | default([])) | length > 0
-      fail_msg: "Smoke query returned no rows on the throwaway instance."
+    - name: Verify smoke query returned a row
+      ansible.builtin.assert:
+        that: (_vfy_mgd_smoke.query_result | default([])) | length > 0
+        fail_msg: Smoke query returned no rows on the throwaway instance.
 
-  # ---- Cleanup ----------------------------------------------------------
-  - name: Delete throwaway RDS instance
-    when:
-    - topology == 'aws-rds'
-    - not (verify_keep_instance | bool)
-    ansible.builtin.command: >-
-      aws rds delete-db-instance
-        --region {{ cloud_region }}
-        --db-instance-identifier {{ _vfy_throwaway_id }}
-        --skip-final-snapshot
-    changed_when: true
+    # ---- Cleanup ----------------------------------------------------------
+    - name: Delete throwaway RDS instance
+      when:
+        - topology == 'aws-rds'
+        - not (verify_keep_instance | bool)
+      ansible.builtin.command: >-
+        aws rds delete-db-instance
+          --region {{ cloud_region }}
+          --db-instance-identifier {{ _vfy_throwaway_id }}
+          --skip-final-snapshot
+      changed_when: true
 
-  - name: Delete throwaway Aurora instance
-    when:
-    - topology == 'aws-aurora'
-    - not (verify_keep_instance | bool)
-    ansible.builtin.command: >-
-      aws rds delete-db-instance
-        --region {{ cloud_region }}
-        --db-instance-identifier {{ _vfy_throwaway_id }}-i1
-        --skip-final-snapshot
-    changed_when: true
+    - name: Delete throwaway Aurora instance
+      when:
+        - topology == 'aws-aurora'
+        - not (verify_keep_instance | bool)
+      ansible.builtin.command: >-
+        aws rds delete-db-instance
+          --region {{ cloud_region }}
+          --db-instance-identifier {{ _vfy_throwaway_id }}-i1
+          --skip-final-snapshot
+      changed_when: true
 
-  - name: Delete throwaway Aurora cluster
-    when:
-    - topology == 'aws-aurora'
-    - not (verify_keep_instance | bool)
-    ansible.builtin.command: >-
-      aws rds delete-db-cluster
-        --region {{ cloud_region }}
-        --db-cluster-identifier {{ _vfy_throwaway_id }}
-        --skip-final-snapshot
-    changed_when: true
+    - name: Delete throwaway Aurora cluster
+      when:
+        - topology == 'aws-aurora'
+        - not (verify_keep_instance | bool)
+      ansible.builtin.command: >-
+        aws rds delete-db-cluster
+          --region {{ cloud_region }}
+          --db-cluster-identifier {{ _vfy_throwaway_id }}
+          --skip-final-snapshot
+      changed_when: true
 
-  - name: Delete throwaway CloudSQL instance
-    when:
-    - topology == 'cloudsql'
-    - not (verify_keep_instance | bool)
-    ansible.builtin.command: >-
-      gcloud sql instances delete {{ _vfy_throwaway_id }}
-        --project {{ cloud_project }}
-        --quiet
-    changed_when: true
+    - name: Delete throwaway CloudSQL instance
+      when:
+        - topology == 'cloudsql'
+        - not (verify_keep_instance | bool)
+      ansible.builtin.command: >-
+        gcloud sql instances delete {{ _vfy_throwaway_id }}
+          --project {{ cloud_project }}
+          --quiet
+      changed_when: true
 
-  - name: Delete throwaway AlloyDB instance
-    when:
-    - topology == 'alloydb'
-    - not (verify_keep_instance | bool)
-    ansible.builtin.command: >-
-      gcloud alloydb instances delete {{ _vfy_throwaway_id }}-i1
-        --project {{ cloud_project }}
-        --region {{ cloud_region }}
-        --cluster {{ _vfy_throwaway_id }}
-        --quiet
-    changed_when: true
+    - name: Delete throwaway AlloyDB instance
+      when:
+        - topology == 'alloydb'
+        - not (verify_keep_instance | bool)
+      ansible.builtin.command: >-
+        gcloud alloydb instances delete {{ _vfy_throwaway_id }}-i1
+          --project {{ cloud_project }}
+          --region {{ cloud_region }}
+          --cluster {{ _vfy_throwaway_id }}
+          --quiet
+      changed_when: true
 
-  - name: Delete throwaway AlloyDB cluster
-    when:
-    - topology == 'alloydb'
-    - not (verify_keep_instance | bool)
-    ansible.builtin.command: >-
-      gcloud alloydb clusters delete {{ _vfy_throwaway_id }}
-        --project {{ cloud_project }}
-        --region {{ cloud_region }}
-        --quiet
-    changed_when: true
+    - name: Delete throwaway AlloyDB cluster
+      when:
+        - topology == 'alloydb'
+        - not (verify_keep_instance | bool)
+      ansible.builtin.command: >-
+        gcloud alloydb clusters delete {{ _vfy_throwaway_id }}
+          --project {{ cloud_project }}
+          --region {{ cloud_region }}
+          --quiet
+      changed_when: true
 
-  - name: Surface verification verdict (managed)
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "Managed backup verified ({{ topology }})"
-      - "  Source instance : {{ managed_instance_id }}"
-      - "  Throwaway       : {{ _vfy_throwaway_id }}"
-      - "  Restore start   : {{ _vfy_mgd_t0 }}"
-      - "  Restore stop    : {{ _vfy_mgd_t1 }}"
-      - "  Smoke query     : {{ verify_smoke_query }}"
-      - "  First row       : {{ (_vfy_mgd_smoke.query_result | default([{}])) | first }}"
-      - "  Instance kept   : {{ verify_keep_instance | bool }}"
-      - "########################################################################"
+    - name: Surface verification verdict (managed)
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - Managed backup verified ({{ topology }})
+          - "  Source instance : {{ managed_instance_id }}"
+          - "  Throwaway       : {{ _vfy_throwaway_id }}"
+          - "  Restore start   : {{ _vfy_mgd_t0 }}"
+          - "  Restore stop    : {{ _vfy_mgd_t1 }}"
+          - "  Smoke query     : {{ verify_smoke_query }}"
+          - "  First row       : {{ (_vfy_mgd_smoke.query_result | default([{}])) | first }}"
+          - "  Instance kept   : {{ verify_keep_instance | bool }}"
+          - "########################################################################"

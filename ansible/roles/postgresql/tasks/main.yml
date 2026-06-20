@@ -2,8 +2,7 @@
 - name: Assert supported OS
   ansible.builtin.assert:
     that:
-    - ansible_facts['os_family'] in ['RedHat', 'Debian']
-      or ansible_facts['distribution'] == 'Amazon'
+      - ansible_facts['os_family'] in ['RedHat', 'Debian'] or ansible_facts['distribution'] == 'Amazon'
     fail_msg: >-
       The postgresql role supports RedHat, Debian, and Amazon Linux;
       got distribution='{{ ansible_facts['distribution'] }}',
@@ -12,17 +11,17 @@
 - name: Assert supported HA mode
   ansible.builtin.assert:
     that: postgresql_ha_mode in ['standalone', 'patroni']
-    fail_msg: "postgresql_ha_mode must be 'standalone' or 'patroni'; got '{{ postgresql_ha_mode }}'."
+    fail_msg: postgresql_ha_mode must be 'standalone' or 'patroni'; got '{{ postgresql_ha_mode }}'.
 
 - name: Assert supported PostgreSQL version
   ansible.builtin.assert:
     that: postgresql_version in ['15', '16', '17', '18']
-    fail_msg: "postgresql_version must be one of 15/16/17/18; got '{{ postgresql_version }}'."
+    fail_msg: postgresql_version must be one of 15/16/17/18; got '{{ postgresql_version }}'.
 
 - name: Assert supported locale provider
   ansible.builtin.assert:
     that: postgresql_locale_provider in ['libc', 'icu']
-    fail_msg: "postgresql_locale_provider must be 'libc' or 'icu'; got '{{ postgresql_locale_provider }}'."
+    fail_msg: postgresql_locale_provider must be 'libc' or 'icu'; got '{{ postgresql_locale_provider }}'.
 
 # Amazon Linux reports os_family=RedHat, but PGDG does not publish AL2023
 # RPMs -- AL2023 ships PG natively via dnf. Derive a variant key so the
@@ -37,7 +36,7 @@
   ansible.builtin.include_vars: "{{ _pg_os_variant }}.yml"
 
 - name: Install PostgreSQL packages and (PGDG) repo
-  ansible.builtin.include_tasks: "install-{{ _pg_os_variant }}.yml"
+  ansible.builtin.include_tasks: install-{{ _pg_os_variant }}.yml
 
 # pgaudit (opt-in). Install the per-major-version package BEFORE the
 # Patroni handoff so embedded clusters get it too -- Patroni's conf
@@ -64,7 +63,7 @@
     enabled: true
 
 - name: Ensure required system locales are installed
-  ansible.builtin.include_tasks: "locales-{{ _pg_os_variant }}.yml"
+  ansible.builtin.include_tasks: locales-{{ _pg_os_variant }}.yml
 
 # shared_preload_libraries requires a restart before CREATE EXTENSION will
 # succeed against the just-added libs, so flush handlers here.
@@ -99,5 +98,5 @@
 - name: Install pgbouncer SECURITY DEFINER auth helper
   ansible.builtin.include_tasks: pgbouncer-auth.yml
   when:
-  - postgresql_pgbouncer_install_auth_helper | bool
-  - postgresql_databases | length > 0
+    - postgresql_pgbouncer_install_auth_helper | bool
+    - postgresql_databases | length > 0

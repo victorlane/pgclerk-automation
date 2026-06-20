@@ -47,41 +47,41 @@
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Refuse to run without --limit
-    ansible.builtin.assert:
-      that: ansible_limit is defined
-      fail_msg: >-
-        drain-node operates on exactly one host.  Re-run with --limit
-        <drain_host>.
+    - name: Refuse to run without --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          drain-node operates on exactly one host.  Re-run with --limit
+          <drain_host>.
 
-  - name: Assert drain_host is defined
-    ansible.builtin.assert:
-      that:
-      - drain_host is defined
-      - drain_host | length > 0
-      fail_msg: "drain_host must be provided (-e drain_host=<inventory hostname>)."
+    - name: Assert drain_host is defined
+      ansible.builtin.assert:
+        that:
+          - drain_host is defined
+          - drain_host | length > 0
+        fail_msg: drain_host must be provided (-e drain_host=<inventory hostname>).
 
-  - name: Assert drain_host is in postgres_servers
-    ansible.builtin.assert:
-      that: drain_host in (groups['postgres_servers'] | default([]))
-      fail_msg: >-
-        drain_host '{{ drain_host }}' is not in inventory group
-        postgres_servers.
+    - name: Assert drain_host is in postgres_servers
+      ansible.builtin.assert:
+        that: drain_host in (groups['postgres_servers'] | default([]))
+        fail_msg: >-
+          drain_host '{{ drain_host }}' is not in inventory group
+          postgres_servers.
 
-  - name: Assert drain_action is supported
-    ansible.builtin.assert:
-      that: (drain_action | default('stop')) in ['stop', 'restart', 'reboot']
-      fail_msg: >-
-        drain_action must be one of: stop, restart, reboot.  Got
-        '{{ drain_action | default("(undefined)") }}'.
+    - name: Assert drain_action is supported
+      ansible.builtin.assert:
+        that: (drain_action | default('stop')) in ['stop', 'restart', 'reboot']
+        fail_msg: >-
+          drain_action must be one of: stop, restart, reboot.  Got
+          '{{ drain_action | default("(undefined)") }}'.
 
-  - name: Refuse to drain the only host in postgres_servers
-    ansible.builtin.assert:
-      that: (groups['postgres_servers'] | default([]) | length) > 1
-      fail_msg: >-
-        drain_host '{{ drain_host }}' is the only host in
-        postgres_servers; draining it leaves no quorum / no service.
-        Refusing.
+    - name: Refuse to drain the only host in postgres_servers
+      ansible.builtin.assert:
+        that: (groups['postgres_servers'] | default([]) | length) > 1
+        fail_msg: >-
+          drain_host '{{ drain_host }}' is the only host in
+          postgres_servers; draining it leaves no quorum / no service.
+          Refusing.
 
 # --- HA branch: switch over if drain_host is the leader ------------------
 #
@@ -93,77 +93,76 @@
   become: true
   gather_facts: false
   tasks:
-  - name: Read cluster topology
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
-    register: _dr_topology
-    changed_when: false
-    failed_when: false
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    - name: Read cluster topology
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+      register: _dr_topology
+      changed_when: false
+      failed_when: false
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  - name: Identify current leader (HA only)
-    ansible.builtin.set_fact:
-      _dr_leader: >-
-        {{ (_dr_topology.stdout | from_json
-            | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
-            | list | first | default({})).Member | default('') }}
-    when:
-    - (postgresql_ha_mode | default('standalone')) == 'patroni'
-    - _dr_topology.rc | default(1) == 0
+    - name: Identify current leader (HA only)
+      ansible.builtin.set_fact:
+        _dr_leader: >-
+          {{ (_dr_topology.stdout | from_json
+              | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
+              | list | first | default({})).Member | default('') }}
+      when:
+        - (postgresql_ha_mode | default('standalone')) == 'patroni'
+        - _dr_topology.rc | default(1) == 0
 
-  - name: Pick a switchover candidate (HA only, when needed)
-    ansible.builtin.set_fact:
-      _dr_candidate: >-
-        {{ (groups['postgres_replicas'] | default([])
-            | difference([drain_host])) | first | default('') }}
-    when:
-    - (postgresql_ha_mode | default('standalone')) == 'patroni'
-    - _dr_leader | default('') == drain_host
+    - name: Pick a switchover candidate (HA only, when needed)
+      ansible.builtin.set_fact:
+        _dr_candidate: >-
+          {{ (groups['postgres_replicas'] | default([])
+              | difference([drain_host])) | first | default('') }}
+      when:
+        - (postgresql_ha_mode | default('standalone')) == 'patroni'
+        - _dr_leader | default('') == drain_host
 
-  - name: Assert a switchover candidate exists when draining the leader
-    ansible.builtin.assert:
-      that: _dr_candidate | default('') | length > 0
-      fail_msg: >-
-        drain_host '{{ drain_host }}' is the current leader but there is
-        no other replica to switch over to.  Add capacity before draining.
-    when:
-    - (postgresql_ha_mode | default('standalone')) == 'patroni'
-    - _dr_leader | default('') == drain_host
+    - name: Assert a switchover candidate exists when draining the leader
+      ansible.builtin.assert:
+        that: _dr_candidate | default('') | length > 0
+        fail_msg: >-
+          drain_host '{{ drain_host }}' is the current leader but there is
+          no other replica to switch over to.  Add capacity before draining.
+      when:
+        - (postgresql_ha_mode | default('standalone')) == 'patroni'
+        - _dr_leader | default('') == drain_host
 
-  - name: Switch over off the drain target (HA only)
-    ansible.builtin.command:
-      argv:
-      - /usr/local/bin/patronictl
-      - -c
-      - /etc/patroni/patroni.yml
-      - switchover
-      - "--master"
-      - "{{ _dr_leader }}"
-      - "--candidate"
-      - "{{ _dr_candidate }}"
-      - "--force"
-    register: _dr_switchover
-    changed_when: true
-    when:
-    - (postgresql_ha_mode | default('standalone')) == 'patroni'
-    - _dr_leader | default('') == drain_host
+    - name: Switch over off the drain target (HA only)
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/patronictl
+          - -c
+          - /etc/patroni/patroni.yml
+          - switchover
+          - --master
+          - "{{ _dr_leader }}"
+          - --candidate
+          - "{{ _dr_candidate }}"
+          - --force
+      register: _dr_switchover
+      changed_when: true
+      when:
+        - (postgresql_ha_mode | default('standalone')) == 'patroni'
+        - _dr_leader | default('') == drain_host
 
-  - name: Wait for the switchover to complete (HA only)
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
-    register: _dr_switchover_poll
-    changed_when: false
-    failed_when: false
-    retries: 60
-    delay: 5
-    until:
-    - _dr_switchover_poll.rc == 0
-    - (_dr_switchover_poll.stdout | from_json
-       | selectattr('Member', 'equalto', _dr_candidate)
-       | map(attribute='Role') | list | first | default('')) in ['Leader', 'Standby Leader']
-    when:
-    - (postgresql_ha_mode | default('standalone')) == 'patroni'
-    - _dr_leader | default('') == drain_host
+    - name: Wait for the switchover to complete (HA only)
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+      register: _dr_switchover_poll
+      changed_when: false
+      failed_when: false
+      retries: 60
+      delay: 5
+      until:
+        - _dr_switchover_poll.rc == 0
+        - (_dr_switchover_poll.stdout | from_json | selectattr('Member', 'equalto', _dr_candidate) | map(attribute='Role') | list | first | default('')) in 
+          ['Leader', 'Standby Leader']
+      when:
+        - (postgresql_ha_mode | default('standalone')) == 'patroni'
+        - _dr_leader | default('') == drain_host
 
 # --- Drain proper -------------------------------------------------------
 
@@ -176,140 +175,140 @@
     drain_max_wait_s: 300
     drain_force_disconnect: false
   tasks:
-  - name: Resolve OS variant + per-OS PG paths
-    ansible.builtin.set_fact:
-      _dr_os_variant: >-
-        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
-           else ansible_facts['os_family'] }}
+    - name: Resolve OS variant + per-OS PG paths
+      ansible.builtin.set_fact:
+        _dr_os_variant: >-
+          {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+             else ansible_facts['os_family'] }}
 
-  - name: Load postgresql OS-specific variables
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _dr_os_variant }}.yml"
-      name: _dr_pg_vars
+    - name: Load postgresql OS-specific variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _dr_os_variant }}.yml"
+        name: _dr_pg_vars
 
-  - name: Resolve managed service unit name
-    ansible.builtin.set_fact:
-      _dr_unit: >-
-        {{ 'patroni.service'
-           if (postgresql_ha_mode | default('standalone')) == 'patroni'
-           else _dr_pg_vars.postgresql_service }}
+    - name: Resolve managed service unit name
+      ansible.builtin.set_fact:
+        _dr_unit: >-
+          {{ 'patroni.service'
+             if (postgresql_ha_mode | default('standalone')) == 'patroni'
+             else _dr_pg_vars.postgresql_service }}
 
-  # --- HA: apply surgical drain tags ----------------------------------
+    # --- HA: apply surgical drain tags ----------------------------------
 
-  - name: Tag node as nofailover + noloadbalance (HA only)
-    ansible.builtin.command:
-      cmd: >-
-        /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
-        edit-config --force --pg
-        --set nofailover=true --set noloadbalance=true
-        {{ patroni_scope | default('pgclerk') }}
-    register: _dr_tags
-    changed_when: true
-    failed_when: false
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    - name: Tag node as nofailover + noloadbalance (HA only)
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
+          edit-config --force --pg
+          --set nofailover=true --set noloadbalance=true
+          {{ patroni_scope | default('pgclerk') }}
+      register: _dr_tags
+      changed_when: true
+      failed_when: false
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  # patronictl edit-config doesn't support per-member tags as flags in
-  # every Patroni version; the canonical knob is the local patroni.yml
-  # tags: block.  Patch that and reload Patroni so the change lands
-  # without a restart.
-  - name: Patch tags.nofailover in local patroni.yml (HA only)
-    ansible.builtin.replace:
-      path: /etc/patroni/patroni.yml
-      regexp: '^(\s*nofailover:\s*).*$'
-      replace: '\1true'
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    # patronictl edit-config doesn't support per-member tags as flags in
+    # every Patroni version; the canonical knob is the local patroni.yml
+    # tags: block.  Patch that and reload Patroni so the change lands
+    # without a restart.
+    - name: Patch tags.nofailover in local patroni.yml (HA only)
+      ansible.builtin.replace:
+        path: /etc/patroni/patroni.yml
+        regexp: ^(\s*nofailover:\s*).*$
+        replace: \1true
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  - name: Patch tags.noloadbalance in local patroni.yml (HA only)
-    ansible.builtin.replace:
-      path: /etc/patroni/patroni.yml
-      regexp: '^(\s*noloadbalance:\s*).*$'
-      replace: '\1true'
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    - name: Patch tags.noloadbalance in local patroni.yml (HA only)
+      ansible.builtin.replace:
+        path: /etc/patroni/patroni.yml
+        regexp: ^(\s*noloadbalance:\s*).*$
+        replace: \1true
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  - name: Reload patroni so new tags take effect (HA only)
-    ansible.builtin.command:
-      cmd: >-
-        /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
-        reload --force {{ patroni_scope | default('pgclerk') }}
-        {{ inventory_hostname }}
-    changed_when: true
-    failed_when: false
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    - name: Reload patroni so new tags take effect (HA only)
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
+          reload --force {{ patroni_scope | default('pgclerk') }}
+          {{ inventory_hostname }}
+      changed_when: true
+      failed_when: false
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  # --- Disable systemd unit so a reboot doesn't bring PG back ---------
+    # --- Disable systemd unit so a reboot doesn't bring PG back ---------
 
-  - name: Disable managed service unit
-    ansible.builtin.systemd:
-      name: "{{ _dr_unit }}"
-      enabled: false
+    - name: Disable managed service unit
+      ansible.builtin.systemd:
+        name: "{{ _dr_unit }}"
+        enabled: false
 
-  # --- Wait for sessions to drain -------------------------------------
+    # --- Wait for sessions to drain -------------------------------------
 
-  - name: Count active client sessions
-    become: true
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: >-
-        SELECT COUNT(*) AS n
-        FROM pg_stat_activity
-        WHERE pid <> pg_backend_pid()
-          AND backend_type = 'client backend'
-    register: _dr_sessions
-    retries: "{{ ((drain_max_wait_s | int) / 10) | int }}"
-    delay: 10
-    until: "((_dr_sessions.query_result | default([{'n': 1}])) | first).n | int == 0"
-    failed_when: false
+    - name: Count active client sessions
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT COUNT(*) AS n
+          FROM pg_stat_activity
+          WHERE pid <> pg_backend_pid()
+            AND backend_type = 'client backend'
+      register: _dr_sessions
+      retries: "{{ ((drain_max_wait_s | int) / 10) | int }}"
+      delay: 10
+      until: "((_dr_sessions.query_result | default([{'n': 1}])) | first).n | int == 0"
+      failed_when: false
 
-  - name: Force-disconnect remaining sessions (opt-in)
-    become: true
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: >-
-        SELECT pg_terminate_backend(pid)
-        FROM pg_stat_activity
-        WHERE pid <> pg_backend_pid()
-          AND backend_type = 'client backend'
-    register: _dr_term
-    when:
-    - drain_force_disconnect | bool
-    - "((_dr_sessions.query_result | default([{'n': 0}])) | first).n | int > 0"
+    - name: Force-disconnect remaining sessions (opt-in)
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT pg_terminate_backend(pid)
+          FROM pg_stat_activity
+          WHERE pid <> pg_backend_pid()
+            AND backend_type = 'client backend'
+      register: _dr_term
+      when:
+        - drain_force_disconnect | bool
+        - "((_dr_sessions.query_result | default([{'n': 0}])) | first).n | int > 0"
 
-  # --- Take the host out ----------------------------------------------
+    # --- Take the host out ----------------------------------------------
 
-  - name: Stop the managed unit
-    ansible.builtin.systemd:
-      name: "{{ _dr_unit }}"
-      state: stopped
-    when: drain_action in ['stop', 'restart']
+    - name: Stop the managed unit
+      ansible.builtin.systemd:
+        name: "{{ _dr_unit }}"
+        state: stopped
+      when: drain_action in ['stop', 'restart']
 
-  - name: Restart the managed unit (drain_action=restart)
-    ansible.builtin.systemd:
-      name: "{{ _dr_unit }}"
-      state: started
-    when: drain_action == 'restart'
+    - name: Restart the managed unit (drain_action=restart)
+      ansible.builtin.systemd:
+        name: "{{ _dr_unit }}"
+        state: started
+      when: drain_action == 'restart'
 
-  - name: Reboot the host (drain_action=reboot)
-    ansible.builtin.reboot:
-      reboot_timeout: 600
-    when: drain_action == 'reboot'
+    - name: Reboot the host (drain_action=reboot)
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+      when: drain_action == 'reboot'
 
-  # --- Verdict --------------------------------------------------------
+    # --- Verdict --------------------------------------------------------
 
-  - name: Surface drain verdict
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "Drain complete for {{ inventory_hostname }}"
-      - "  Mode             : {{ postgresql_ha_mode | default('standalone') }}"
-      - "  Action           : {{ drain_action }}"
-      - "  Unit             : {{ _dr_unit }} (disabled)"
-      - "  Sessions left    : {{ ((_dr_sessions.query_result | default([{'n': '?'}])) | first).n | default('?') }}"
-      - "  Force-disconnect : {{ drain_force_disconnect | bool }}"
-      - "  Tags applied     : {{ 'nofailover=true, noloadbalance=true' if (postgresql_ha_mode | default('standalone')) == 'patroni' else 'n/a' }}"
-      - ""
-      - "To bring this host back into the cluster, run:"
-      - "  ansible-playbook playbooks/maintenance/undrain-node.yml \\"
-      - "    --limit {{ inventory_hostname }} -e undrain_host={{ inventory_hostname }}"
-      - "########################################################################"
+    - name: Surface drain verdict
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - Drain complete for {{ inventory_hostname }}
+          - "  Mode             : {{ postgresql_ha_mode | default('standalone') }}"
+          - "  Action           : {{ drain_action }}"
+          - "  Unit             : {{ _dr_unit }} (disabled)"
+          - "  Sessions left    : {{ ((_dr_sessions.query_result | default([{'n': '?'}])) | first).n | default('?') }}"
+          - "  Force-disconnect : {{ drain_force_disconnect | bool }}"
+          - "  Tags applied     : {{ 'nofailover=true, noloadbalance=true' if (postgresql_ha_mode | default('standalone')) == 'patroni' else 'n/a' }}"
+          - ""
+          - "To bring this host back into the cluster, run:"
+          - "  ansible-playbook playbooks/maintenance/undrain-node.yml \\"
+          - "    --limit {{ inventory_hostname }} -e undrain_host={{ inventory_hostname }}"
+          - "########################################################################"

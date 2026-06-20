@@ -33,5 +33,5 @@
     target_role: "{{ postgres_exporter_sql_role }}"
     state: present
   loop:
-  - pg_monitor
-  - pg_read_all_stats
+    - pg_monitor
+    - pg_read_all_stats

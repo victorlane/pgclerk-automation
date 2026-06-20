@@ -4,8 +4,8 @@
     name: "{{ postgresql_service }}"
     state: reloaded
   when:
-  - _pgbr_is_pg_node | default(false)
-  - postgresql_ha_mode | default('standalone') == 'standalone'
+    - _pgbr_is_pg_node | default(false)
+    - postgresql_ha_mode | default('standalone') == 'standalone'
 
 - name: Reload systemd daemon
   ansible.builtin.systemd:

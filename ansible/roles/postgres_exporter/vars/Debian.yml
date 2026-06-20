@@ -5,6 +5,6 @@
 # env file. We ignore the shipped systemd unit and write our own so the
 # config layout matches the other distros.
 postgres_exporter_packages:
-- prometheus-postgres-exporter
+  - prometheus-postgres-exporter
 
 postgres_exporter_package_bin: /usr/bin/prometheus-postgres-exporter

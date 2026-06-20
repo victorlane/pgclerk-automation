@@ -41,30 +41,29 @@
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Assert failover_candidate is defined
-    ansible.builtin.assert:
-      that:
-      - failover_candidate is defined
-      - failover_candidate | length > 0
-      fail_msg: "failover_candidate must be provided (-e failover_candidate=<host>)."
+    - name: Assert failover_candidate is defined
+      ansible.builtin.assert:
+        that:
+          - failover_candidate is defined
+          - failover_candidate | length > 0
+        fail_msg: failover_candidate must be provided (-e failover_candidate=<host>).
 
-  - name: Assert failover_candidate is in inventory
-    ansible.builtin.assert:
-      that:
-      - (failover_candidate in (groups['postgres_replicas'] | default([])))
-        or (failover_candidate in (groups['postgres_servers'] | default([])))
-      fail_msg: >-
-        failover_candidate '{{ failover_candidate }}' is not in inventory
-        groups postgres_replicas or postgres_servers.
+    - name: Assert failover_candidate is in inventory
+      ansible.builtin.assert:
+        that:
+          - (failover_candidate in (groups['postgres_replicas'] | default([]))) or (failover_candidate in (groups['postgres_servers'] | default([])))
+        fail_msg: >-
+          failover_candidate '{{ failover_candidate }}' is not in inventory
+          groups postgres_replicas or postgres_servers.
 
-  - name: Assert failover_confirm is defined
-    ansible.builtin.assert:
-      that:
-      - failover_confirm is defined
-      - failover_confirm | length > 0
-      fail_msg: >-
-        failover_confirm must be provided and must equal the cluster name
-        (-e failover_confirm=<patroni_scope>). Destructive gate.
+    - name: Assert failover_confirm is defined
+      ansible.builtin.assert:
+        that:
+          - failover_confirm is defined
+          - failover_confirm | length > 0
+        fail_msg: >-
+          failover_confirm must be provided and must equal the cluster name
+          (-e failover_confirm=<patroni_scope>). Destructive gate.
 
 - name: Issue Patroni failover
   hosts: "{{ groups['postgres_primary'] | default([]) | first | default(groups['postgres_servers'] | first) }}"
@@ -76,198 +75,197 @@
   tasks:
   # --- Pre-flight ---------------------------------------------------------
 
-  - name: Refuse unless cluster is in patroni mode
-    ansible.builtin.assert:
-      that: (postgresql_ha_mode | default('standalone')) == 'patroni'
-      fail_msg: >-
-        failover.yml is HA-specific (Patroni). Cluster runs
-        postgresql_ha_mode={{ postgresql_ha_mode | default('standalone') }}.
+    - name: Refuse unless cluster is in patroni mode
+      ansible.builtin.assert:
+        that: (postgresql_ha_mode | default('standalone')) == 'patroni'
+        fail_msg: >-
+          failover.yml is HA-specific (Patroni). Cluster runs
+          postgresql_ha_mode={{ postgresql_ha_mode | default('standalone') }}.
 
-  - name: Assert failover_confirm matches patroni_scope
-    ansible.builtin.assert:
-      that: failover_confirm == (patroni_scope | default('pgclerk'))
-      fail_msg: >-
-        failover_confirm '{{ failover_confirm }}' does not match
-        patroni_scope '{{ patroni_scope | default('pgclerk') }}'.
-        Re-issue with the matching cluster name.
+    - name: Assert failover_confirm matches patroni_scope
+      ansible.builtin.assert:
+        that: failover_confirm == (patroni_scope | default('pgclerk'))
+        fail_msg: >-
+          failover_confirm '{{ failover_confirm }}' does not match
+          patroni_scope '{{ patroni_scope | default('pgclerk') }}'.
+          Re-issue with the matching cluster name.
 
-  - name: Capture cluster topology (before)
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
-    register: _fo_list_pre
-    changed_when: false
-    failed_when: false
+    - name: Capture cluster topology (before)
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+      register: _fo_list_pre
+      changed_when: false
+      failed_when: false
 
-  - name: Surface pre-failover patronictl list (text form)
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
-    register: _fo_list_pre_text
-    changed_when: false
-    failed_when: false
+    - name: Surface pre-failover patronictl list (text form)
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
+      register: _fo_list_pre_text
+      changed_when: false
+      failed_when: false
 
-  - name: Display pre-failover topology
-    ansible.builtin.debug:
-      var: _fo_list_pre_text.stdout_lines
+    - name: Display pre-failover topology
+      ansible.builtin.debug:
+        var: _fo_list_pre_text.stdout_lines
 
-  - name: Parse pre-failover topology
-    ansible.builtin.set_fact:
-      _fo_members_pre: "{{ _fo_list_pre.stdout | from_json | default([]) }}"
+    - name: Parse pre-failover topology
+      ansible.builtin.set_fact:
+        _fo_members_pre: "{{ _fo_list_pre.stdout | from_json | default([]) }}"
 
-  - name: Identify candidate entry
-    ansible.builtin.set_fact:
-      _fo_candidate_entry: >-
-        {{ (_fo_members_pre
-            | selectattr('Member', 'equalto', failover_candidate)
-            | list | first | default({})) }}
+    - name: Identify candidate entry
+      ansible.builtin.set_fact:
+        _fo_candidate_entry: >-
+          {{ (_fo_members_pre
+              | selectattr('Member', 'equalto', failover_candidate)
+              | list | first | default({})) }}
 
-  - name: Compute candidate lag (bytes; patronictl reports MB, convert)
-    ansible.builtin.set_fact:
-      _fo_candidate_lag_bytes: >-
-        {{ ((_fo_candidate_entry['Lag in MB'] | default(0)) | int) * 1024 * 1024 }}
+    - name: Compute candidate lag (bytes; patronictl reports MB, convert)
+      ansible.builtin.set_fact:
+        _fo_candidate_lag_bytes: >-
+          {{ ((_fo_candidate_entry['Lag in MB'] | default(0)) | int) * 1024 * 1024 }}
 
-  - name: Refuse when candidate lag exceeds failover_max_lag_bytes
-    when: not (failover_skip_lag_check | bool)
-    ansible.builtin.assert:
-      that: (_fo_candidate_lag_bytes | int) <= (failover_max_lag_bytes | int)
-      fail_msg: >-
-        Candidate '{{ failover_candidate }}' has lag
-        {{ _fo_candidate_lag_bytes }} bytes, exceeding
-        failover_max_lag_bytes={{ failover_max_lag_bytes }}.
-        Promoting now would lose recent commits. Set
-        failover_skip_lag_check=true ONLY if you accept that loss.
-        Topology snapshot:
-        {{ _fo_list_pre_text.stdout }}
+    - name: Refuse when candidate lag exceeds failover_max_lag_bytes
+      when: not (failover_skip_lag_check | bool)
+      ansible.builtin.assert:
+        that: (_fo_candidate_lag_bytes | int) <= (failover_max_lag_bytes | int)
+        fail_msg: >-
+          Candidate '{{ failover_candidate }}' has lag
+          {{ _fo_candidate_lag_bytes }} bytes, exceeding
+          failover_max_lag_bytes={{ failover_max_lag_bytes }}.
+          Promoting now would lose recent commits. Set
+          failover_skip_lag_check=true ONLY if you accept that loss.
+          Topology snapshot:
+          {{ _fo_list_pre_text.stdout }}
 
-  - name: Surface failover plan
-    ansible.builtin.debug:
-      msg:
-      - "Failover plan"
-      - "  Candidate           : {{ failover_candidate }}"
-      - "  Candidate lag bytes : {{ _fo_candidate_lag_bytes }}"
-      - "  Threshold bytes     : {{ failover_max_lag_bytes }}"
-      - "  Skip lag check      : {{ failover_skip_lag_check | bool }}"
-      - "  Scope               : {{ patroni_scope | default('pgclerk') }}"
+    - name: Surface failover plan
+      ansible.builtin.debug:
+        msg:
+          - Failover plan
+          - "  Candidate           : {{ failover_candidate }}"
+          - "  Candidate lag bytes : {{ _fo_candidate_lag_bytes }}"
+          - "  Threshold bytes     : {{ failover_max_lag_bytes }}"
+          - "  Skip lag check      : {{ failover_skip_lag_check | bool }}"
+          - "  Scope               : {{ patroni_scope | default('pgclerk') }}"
 
-  # --- Execute failover ---------------------------------------------------
+    # --- Execute failover ---------------------------------------------------
 
-  - name: Capture failover start time
-    ansible.builtin.set_fact:
-      _fo_t0: "{{ ansible_date_time.iso8601 }}"
+    - name: Capture failover start time
+      ansible.builtin.set_fact:
+        _fo_t0: "{{ ansible_date_time.iso8601 }}"
 
-  - name: Issue patronictl failover (non-interactive)
-    ansible.builtin.command:
-      argv:
-      - /usr/local/bin/patronictl
-      - -c
-      - /etc/patroni/patroni.yml
-      - failover
-      - "{{ patroni_scope | default('pgclerk') }}"
-      - --candidate
-      - "{{ failover_candidate }}"
-      - --force
-    register: _fo_run
-    changed_when: true
+    - name: Issue patronictl failover (non-interactive)
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/patronictl
+          - -c
+          - /etc/patroni/patroni.yml
+          - failover
+          - "{{ patroni_scope | default('pgclerk') }}"
+          - --candidate
+          - "{{ failover_candidate }}"
+          - --force
+      register: _fo_run
+      changed_when: true
 
-  - name: Surface failover command output
-    ansible.builtin.debug:
-      var: _fo_run.stdout_lines
+    - name: Surface failover command output
+      ansible.builtin.debug:
+        var: _fo_run.stdout_lines
 
-  # --- Poll until candidate is the new leader -----------------------------
+    # --- Poll until candidate is the new leader -----------------------------
 
-  - name: Poll patronictl until candidate becomes Leader
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
-    register: _fo_poll
-    changed_when: false
-    failed_when: false
-    retries: 60
-    delay: 5
-    until:
-    - _fo_poll.rc == 0
-    - (_fo_poll.stdout | from_json
-       | selectattr('Member', 'equalto', failover_candidate)
-       | map(attribute='Role') | list | first | default('')) in ['Leader', 'Standby Leader']
+    - name: Poll patronictl until candidate becomes Leader
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+      register: _fo_poll
+      changed_when: false
+      failed_when: false
+      retries: 60
+      delay: 5
+      until:
+        - _fo_poll.rc == 0
+        - (_fo_poll.stdout | from_json | selectattr('Member', 'equalto', failover_candidate) | map(attribute='Role') | list | first | default('')) in ['Leader',
+          'Standby Leader']
 
-  - name: Capture failover stop time
-    ansible.builtin.set_fact:
-      _fo_t1: "{{ ansible_date_time.iso8601 }}"
+    - name: Capture failover stop time
+      ansible.builtin.set_fact:
+        _fo_t1: "{{ ansible_date_time.iso8601 }}"
 
-  - name: Capture cluster topology (after)
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
-    register: _fo_list_post
-    changed_when: false
+    - name: Capture cluster topology (after)
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
+      register: _fo_list_post
+      changed_when: false
 
-  - name: Display post-failover topology
-    ansible.builtin.debug:
-      var: _fo_list_post.stdout_lines
+    - name: Display post-failover topology
+      ansible.builtin.debug:
+        var: _fo_list_post.stdout_lines
 
-  # --- Split-brain check + smoke RW connection ----------------------------
+    # --- Split-brain check + smoke RW connection ----------------------------
 
-  - name: Parse post-failover topology
-    ansible.builtin.set_fact:
-      _fo_members_post: "{{ _fo_poll.stdout | from_json | default([]) }}"
+    - name: Parse post-failover topology
+      ansible.builtin.set_fact:
+        _fo_members_post: "{{ _fo_poll.stdout | from_json | default([]) }}"
 
-  - name: Count leaders post-failover (split-brain detector)
-    ansible.builtin.set_fact:
-      _fo_leader_count: >-
-        {{ (_fo_members_post
-            | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
-            | list | length) }}
+    - name: Count leaders post-failover (split-brain detector)
+      ansible.builtin.set_fact:
+        _fo_leader_count: >-
+          {{ (_fo_members_post
+              | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
+              | list | length) }}
 
-  - name: Refuse to declare success when more than one Leader is visible
-    ansible.builtin.assert:
-      that: (_fo_leader_count | int) == 1
-      fail_msg: >-
-        Post-failover topology shows {{ _fo_leader_count }} Leader entries.
-        This looks like split-brain; do NOT route writes until the cluster
-        view collapses to exactly one Leader. Inspect:
-        {{ _fo_list_post.stdout }}
+    - name: Refuse to declare success when more than one Leader is visible
+      ansible.builtin.assert:
+        that: (_fo_leader_count | int) == 1
+        fail_msg: >-
+          Post-failover topology shows {{ _fo_leader_count }} Leader entries.
+          This looks like split-brain; do NOT route writes until the cluster
+          view collapses to exactly one Leader. Inspect:
+          {{ _fo_list_post.stdout }}
 
-  - name: Smoke read-write SQL against the new leader
-    delegate_to: localhost
-    become: false
-    community.postgresql.postgresql_query:
-      login_host: "{{ hostvars[failover_candidate].ansible_host | default(failover_candidate) }}"
-      login_port: "{{ postgresql_port | default(5432) }}"
-      login_user: "postgres"
-      login_password: "{{ patroni_superuser_password | default('changeme-superuser') }}"
-      db: postgres
-      query: >-
-        SELECT 1 AS one,
-               pg_is_in_recovery() AS in_recovery,
-               inet_server_addr() AS server
+    - name: Smoke read-write SQL against the new leader
+      delegate_to: localhost
+      become: false
+      community.postgresql.postgresql_query:
+        login_host: "{{ hostvars[failover_candidate].ansible_host | default(failover_candidate) }}"
+        login_port: "{{ postgresql_port | default(5432) }}"
+        login_user: postgres
+        login_password: "{{ patroni_superuser_password | default('changeme-superuser') }}"
+        db: postgres
+        query: >-
+          SELECT 1 AS one,
+                 pg_is_in_recovery() AS in_recovery,
+                 inet_server_addr() AS server
       # target_session_attrs=read-write semantics: pg_is_in_recovery must be
       # false on the new leader; we assert below.
-    register: _fo_smoke
-    failed_when: false
+      register: _fo_smoke
+      failed_when: false
 
-  - name: Assert the smoke target is genuinely read-write
-    ansible.builtin.assert:
-      that:
-      - (_fo_smoke.query_result | default([])) | length == 1
-      - (_fo_smoke.query_result | first).in_recovery == false
-      fail_msg: >-
-        Smoke query against the new leader either failed or reported
-        pg_is_in_recovery=true. The promotion has not completed; do NOT
-        route writes yet. Smoke result:
-        {{ _fo_smoke.query_result | default('no result') }}
+    - name: Assert the smoke target is genuinely read-write
+      ansible.builtin.assert:
+        that:
+          - (_fo_smoke.query_result | default([])) | length == 1
+          - (_fo_smoke.query_result | first).in_recovery == false
+        fail_msg: >-
+          Smoke query against the new leader either failed or reported
+          pg_is_in_recovery=true. The promotion has not completed; do NOT
+          route writes yet. Smoke result:
+          {{ _fo_smoke.query_result | default('no result') }}
 
-  - name: Surface failover verdict
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "Patroni failover (UNPLANNED) complete"
-      - "  Candidate     : {{ failover_candidate }}"
-      - "  Started       : {{ _fo_t0 }}"
-      - "  Stopped       : {{ _fo_t1 }}"
-      - "  Leader count  : {{ _fo_leader_count }} (must be 1 -- no split-brain)"
-      - "  Smoke         : {{ (_fo_smoke.query_result | default([{}])) | first }}"
-      - "  Topology      :"
-      - "{{ _fo_list_post.stdout }}"
-      - ""
-      - "RUNBOOK FOLLOW-UP:"
-      - "  If the old primary returns, run replica-rebuild.yml against it"
-      - "  before bringing it back into rotation. Patroni won't auto-rewind"
-      - "  across a forced failover and the old leader will have diverged."
-      - "########################################################################"
+    - name: Surface failover verdict
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - Patroni failover (UNPLANNED) complete
+          - "  Candidate     : {{ failover_candidate }}"
+          - "  Started       : {{ _fo_t0 }}"
+          - "  Stopped       : {{ _fo_t1 }}"
+          - "  Leader count  : {{ _fo_leader_count }} (must be 1 -- no split-brain)"
+          - "  Smoke         : {{ (_fo_smoke.query_result | default([{}])) | first }}"
+          - "  Topology      :"
+          - "{{ _fo_list_post.stdout }}"
+          - ""
+          - "RUNBOOK FOLLOW-UP:"
+          - "  If the old primary returns, run replica-rebuild.yml against it"
+          - "  before bringing it back into rotation. Patroni won't auto-rewind"
+          - "  across a forced failover and the old leader will have diverged."
+          - "########################################################################"

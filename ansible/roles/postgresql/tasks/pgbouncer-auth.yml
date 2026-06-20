@@ -20,8 +20,8 @@
 - name: Assert pgbouncer auth helper password is supplied
   ansible.builtin.assert:
     that:
-    - postgresql_pgbouncer_auth_password is defined
-    - postgresql_pgbouncer_auth_password | length > 0
+      - postgresql_pgbouncer_auth_password is defined
+      - postgresql_pgbouncer_auth_password | length > 0
     fail_msg: >-
       postgresql_pgbouncer_install_auth_helper is true (pgbouncer is in
       inventory), so the SQL role '{{ postgresql_pgbouncer_auth_user }}'

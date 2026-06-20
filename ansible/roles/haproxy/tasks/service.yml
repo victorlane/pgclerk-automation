@@ -19,8 +19,8 @@
     group: root
     mode: "0644"
   notify:
-  - Reload systemd daemon
-  - Restart haproxy
+    - Reload systemd daemon
+    - Restart haproxy
 
 # Flush so the daemon-reload runs before we start the unit -- otherwise
 # the first start ignores the drop-in until the next systemctl reload.

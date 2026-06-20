@@ -6,16 +6,16 @@ galaxy_info:
   license: MIT
   min_ansible_version: "2.14"
   platforms:
-  - name: EL
-    versions: [ "8", "9" ]
-  - name: Amazon
-    versions: [ "2023" ]
-  - name: Debian
-    versions: [ "bookworm", "trixie" ]
-  - name: Ubuntu
-    versions: [ "jammy", "noble" ]
+    - name: EL
+      versions: ["8", "9"]
+    - name: Amazon
+      versions: ["2023"]
+    - name: Debian
+      versions: [bookworm, trixie]
+    - name: Ubuntu
+      versions: [jammy, noble]
   galaxy_tags:
-  - database
-  - postgresql
+    - database
+    - postgresql
 
 dependencies: []

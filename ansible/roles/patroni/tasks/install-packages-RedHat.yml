@@ -2,6 +2,6 @@
 - name: Ensure python3-pip and python3-setuptools are installed
   ansible.builtin.dnf:
     name:
-    - python3-pip
-    - python3-setuptools
+      - python3-pip
+      - python3-setuptools
     state: present

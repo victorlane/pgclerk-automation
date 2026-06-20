@@ -1,7 +1,8 @@
 ## Ansible
 .ansible-facts-cache/
+.ansible/
 *.retry
-collections/ansible_collections/
+ansible/collections/ansible_collections/
 
 ## Terraform
 .terraform/

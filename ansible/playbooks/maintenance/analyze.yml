@@ -30,60 +30,60 @@
     analyze_tables: []
     analyze_verbose: true
   tasks:
-  - name: Assert required vars are defined
-    ansible.builtin.assert:
-      that:
-      - db_name is defined
-      - db_name | length > 0
-      fail_msg: "db_name must be provided (-e db_name=<name>)."
+    - name: Assert required vars are defined
+      ansible.builtin.assert:
+        that:
+          - db_name is defined
+          - db_name | length > 0
+        fail_msg: db_name must be provided (-e db_name=<name>).
 
-  - name: Record start time
-    ansible.builtin.set_fact:
-      _analyze_start: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%FT%TZ')) }}"
+    - name: Record start time
+      ansible.builtin.set_fact:
+        _analyze_start: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%FT%TZ')) }}"
 
-  - name: Run database-wide ANALYZE
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: "{{ db_name }}"
-      autocommit: true
-      query: "VACUUM ({{ 'ANALYZE, VERBOSE' if analyze_verbose | bool else 'ANALYZE' }})"
-    when: analyze_tables | length == 0
-    register: _analyze_db
+    - name: Run database-wide ANALYZE
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: "{{ db_name }}"
+        autocommit: true
+        query: VACUUM ({{ 'ANALYZE, VERBOSE' if analyze_verbose | bool else 'ANALYZE' }})
+      when: analyze_tables | length == 0
+      register: _analyze_db
 
-  - name: Run per-table ANALYZE
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: "{{ db_name }}"
-      autocommit: true
-      query: "VACUUM ({{ 'ANALYZE, VERBOSE' if analyze_verbose | bool else 'ANALYZE' }}) {{ item }}"
-    loop: "{{ analyze_tables }}"
-    when: analyze_tables | length > 0
-    register: _analyze_tables
+    - name: Run per-table ANALYZE
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: "{{ db_name }}"
+        autocommit: true
+        query: VACUUM ({{ 'ANALYZE, VERBOSE' if analyze_verbose | bool else 'ANALYZE' }}) {{ item }}
+      loop: "{{ analyze_tables }}"
+      when: analyze_tables | length > 0
+      register: _analyze_tables
 
-  - name: Record end time
-    ansible.builtin.set_fact:
-      _analyze_end: "{{ lookup('pipe', 'date -u +%FT%TZ') }}"
+    - name: Record end time
+      ansible.builtin.set_fact:
+        _analyze_end: "{{ lookup('pipe', 'date -u +%FT%TZ') }}"
 
-  - name: Collect per-table stats from pg_stat_user_tables
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: "{{ db_name }}"
-      query: >-
-        SELECT schemaname, relname, n_live_tup, n_dead_tup,
-               last_analyze, last_autoanalyze, analyze_count
-        FROM pg_stat_user_tables
-        ORDER BY n_live_tup DESC NULLS LAST
-        LIMIT 50
-    register: _stats
+    - name: Collect per-table stats from pg_stat_user_tables
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: "{{ db_name }}"
+        query: >-
+          SELECT schemaname, relname, n_live_tup, n_dead_tup,
+                 last_analyze, last_autoanalyze, analyze_count
+          FROM pg_stat_user_tables
+          ORDER BY n_live_tup DESC NULLS LAST
+          LIMIT 50
+      register: _stats
 
-  - name: Report ANALYZE outcome
-    ansible.builtin.debug:
-      msg:
-      - "Database: {{ db_name }}"
-      - "Started:  {{ _analyze_start }}"
-      - "Ended:    {{ _analyze_end }}"
-      - "Mode:     {{ 'per-table (' ~ (analyze_tables | length) ~ ' tables)' if analyze_tables | length > 0 else 'database-wide' }}"
+    - name: Report ANALYZE outcome
+      ansible.builtin.debug:
+        msg:
+          - "Database: {{ db_name }}"
+          - "Started:  {{ _analyze_start }}"
+          - "Ended:    {{ _analyze_end }}"
+          - "Mode:     {{ 'per-table (' ~ (analyze_tables | length) ~ ' tables)' if analyze_tables | length > 0 else 'database-wide' }}"
 
-  - name: Show top tables by live tuples
-    ansible.builtin.debug:
-      var: _stats.query_result
+    - name: Show top tables by live tuples
+      ansible.builtin.debug:
+        var: _stats.query_result

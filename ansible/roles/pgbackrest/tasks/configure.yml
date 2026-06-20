@@ -16,7 +16,7 @@
 # fans out from there.
 - name: Patch Patroni DCS with pgbackrest archive params (run_once)
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ patroni_restapi_port | default(8008) }}/config"
+    url: http://127.0.0.1:{{ patroni_restapi_port | default(8008) }}/config
     method: PATCH
     headers:
       Content-Type: application/json
@@ -25,7 +25,7 @@
       postgresql:
         parameters:
           archive_mode: "on"
-          archive_command: "pgbackrest --stanza={{ pgbackrest_stanza }} archive-push %p"
+          archive_command: pgbackrest --stanza={{ pgbackrest_stanza }} archive-push %p
           archive_timeout: 60
           wal_level: replica
           max_wal_senders: 10
@@ -34,8 +34,8 @@
   delegate_to: "{{ groups['postgres_primary'] | first }}"
   run_once: true
   when:
-  - _pgbr_is_pg_node
-  - postgresql_ha_mode | default('standalone') == 'patroni'
+    - _pgbr_is_pg_node
+    - postgresql_ha_mode | default('standalone') == 'patroni'
 
 # archive_mode is postmaster-context; Patroni won't apply it via reload.
 # After the PATCH, each member's patronictl list shows "pending restart".
@@ -58,15 +58,15 @@
   delegate_to: "{{ groups['postgres_primary'] | first }}"
   run_once: true
   when:
-  - _pgbr_is_pg_node
-  - postgresql_ha_mode | default('standalone') == 'patroni'
-  - _pgbr_patroni_patch.changed
+    - _pgbr_is_pg_node
+    - postgresql_ha_mode | default('standalone') == 'patroni'
+    - _pgbr_patroni_patch.changed
 
 # Verify archive_mode is on after the restart sequence (run_once on
 # the leader -- if it's on here, it's on cluster-wide).
 - name: Wait for archive_mode=on on the leader after restart
   ansible.builtin.command:
-    cmd: "psql -tAXc 'SHOW archive_mode'"
+    cmd: psql -tAXc 'SHOW archive_mode'
   become: true
   become_user: postgres
   register: _pgbr_archive_mode
@@ -77,8 +77,8 @@
   delegate_to: "{{ groups['postgres_primary'] | first }}"
   run_once: true
   when:
-  - _pgbr_is_pg_node
-  - postgresql_ha_mode | default('standalone') == 'patroni'
+    - _pgbr_is_pg_node
+    - postgresql_ha_mode | default('standalone') == 'patroni'
 
 - name: Ensure conf.d include directory exists (standalone, PG node)
   ansible.builtin.file:
@@ -88,23 +88,23 @@
     group: postgres
     mode: "0750"
   when:
-  - _pgbr_is_pg_node
-  - postgresql_ha_mode | default('standalone') == 'standalone'
-  - pgbackrest_manage_archive_command | bool
+    - _pgbr_is_pg_node
+    - postgresql_ha_mode | default('standalone') == 'standalone'
+    - pgbackrest_manage_archive_command | bool
 
 - name: Ensure postgresql.conf loads conf.d (standalone, PG node)
   ansible.builtin.lineinfile:
     path: "{{ postgresql_conf_path }}"
-    line: "include_dir = 'conf.d'"
-    regexp: '^\s*include_dir\s*=\s*''conf\.d'''
+    line: include_dir = 'conf.d'
+    regexp: ^\s*include_dir\s*=\s*'conf\.d'
     state: present
     owner: postgres
     group: postgres
     mode: "0640"
   when:
-  - _pgbr_is_pg_node
-  - postgresql_ha_mode | default('standalone') == 'standalone'
-  - pgbackrest_manage_archive_command | bool
+    - _pgbr_is_pg_node
+    - postgresql_ha_mode | default('standalone') == 'standalone'
+    - pgbackrest_manage_archive_command | bool
   notify: Reload postgresql for archive_command
 
 - name: Drop archive_command override (standalone, PG node)
@@ -121,7 +121,7 @@
       wal_level = replica
       max_wal_senders = 10
   when:
-  - _pgbr_is_pg_node
-  - postgresql_ha_mode | default('standalone') == 'standalone'
-  - pgbackrest_manage_archive_command | bool
+    - _pgbr_is_pg_node
+    - postgresql_ha_mode | default('standalone') == 'standalone'
+    - pgbackrest_manage_archive_command | bool
   notify: Reload postgresql for archive_command

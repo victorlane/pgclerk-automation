@@ -26,7 +26,7 @@
   become_user: postgres
   community.postgresql.postgresql_query:
     db: "{{ postgresql_template_db }}"
-    query: "ALTER DATABASE {{ postgresql_template_db | quote }} SET search_path = public, pg_catalog"
+    query: ALTER DATABASE {{ postgresql_template_db | quote }} SET search_path = public, pg_catalog
 
 - name: Lock down public schema and database privileges
   become: true
@@ -35,10 +35,10 @@
     db: "{{ postgresql_template_db }}"
     query: "{{ item }}"
   loop:
-  - "REVOKE CREATE ON SCHEMA public FROM PUBLIC"
-  - "REVOKE ALL ON DATABASE {{ postgresql_template_db | quote }} FROM PUBLIC"
-  - "GRANT CONNECT ON DATABASE {{ postgresql_template_db | quote }} TO PUBLIC"
-  - "GRANT USAGE ON SCHEMA public TO PUBLIC"
+    - REVOKE CREATE ON SCHEMA public FROM PUBLIC
+    - REVOKE ALL ON DATABASE {{ postgresql_template_db | quote }} FROM PUBLIC
+    - GRANT CONNECT ON DATABASE {{ postgresql_template_db | quote }} TO PUBLIC
+    - GRANT USAGE ON SCHEMA public TO PUBLIC
 
 - name: Ensure base roles exist (idempotent)
   become: true
@@ -59,9 +59,9 @@
     db: "{{ postgresql_template_db }}"
     query: "{{ item }}"
   loop:
-  - "ALTER DEFAULT PRIVILEGES REVOKE ALL ON TABLES    FROM PUBLIC"
-  - "ALTER DEFAULT PRIVILEGES REVOKE ALL ON SEQUENCES FROM PUBLIC"
-  - "ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC"
+    - ALTER DEFAULT PRIVILEGES REVOKE ALL ON TABLES    FROM PUBLIC
+    - ALTER DEFAULT PRIVILEGES REVOKE ALL ON SEQUENCES FROM PUBLIC
+    - ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC
 
 - name: Grant connect and schema usage to base roles
   become: true
@@ -70,8 +70,8 @@
     db: "{{ postgresql_template_db }}"
     query: "{{ item }}"
   loop:
-  - "GRANT CONNECT ON DATABASE {{ postgresql_template_db | quote }} TO db_readonly, db_readwrite, db_admin"
-  - "GRANT USAGE ON SCHEMA public TO db_readonly, db_readwrite, db_admin"
+    - GRANT CONNECT ON DATABASE {{ postgresql_template_db | quote }} TO db_readonly, db_readwrite, db_admin
+    - GRANT USAGE ON SCHEMA public TO db_readonly, db_readwrite, db_admin
 
 - name: Set default privileges for base roles in public schema
   become: true
@@ -80,11 +80,11 @@
     db: "{{ postgresql_template_db }}"
     query: "{{ item }}"
   loop:
-  - "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO db_readonly"
-  - "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO db_readwrite"
-  - "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO db_readwrite"
-  - "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"
-  - "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO db_readwrite, db_readonly"
+    - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO db_readonly
+    - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO db_readwrite
+    - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO db_readwrite
+    - ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC
+    - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO db_readwrite, db_readonly
 
 - name: Set audit logging parameters on template database
   become: true
@@ -93,15 +93,15 @@
     db: "{{ postgresql_template_db }}"
     query: "{{ item }}"
   loop:
-  - "ALTER DATABASE {{ postgresql_template_db | quote }} SET log_statement = 'ddl'"
-  - "ALTER DATABASE {{ postgresql_template_db | quote }} SET log_min_duration_statement = {{ postgresql_template_log_min_duration }}"
+    - ALTER DATABASE {{ postgresql_template_db | quote }} SET log_statement = 'ddl'
+    - ALTER DATABASE {{ postgresql_template_db | quote }} SET log_min_duration_statement = {{ postgresql_template_log_min_duration }}
 
 - name: Set template database comment
   become: true
   become_user: postgres
   community.postgresql.postgresql_query:
     db: postgres
-    query: "COMMENT ON DATABASE {{ postgresql_template_db | quote }} IS %(comment)s"
+    query: COMMENT ON DATABASE {{ postgresql_template_db | quote }} IS %(comment)s
     named_args:
       comment: "{{ postgresql_template_comment }}"
 
@@ -112,6 +112,6 @@
   become_user: postgres
   community.postgresql.postgresql_query:
     db: postgres
-    query: "UPDATE pg_database SET datistemplate = TRUE, datallowconn = TRUE WHERE datname = %(db)s"
+    query: UPDATE pg_database SET datistemplate = TRUE, datallowconn = TRUE WHERE datname = %(db)s
     named_args:
       db: "{{ postgresql_template_db }}"

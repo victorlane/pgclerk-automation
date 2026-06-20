@@ -2,8 +2,7 @@
 - name: Assert supported OS
   ansible.builtin.assert:
     that:
-    - ansible_facts['os_family'] in ['RedHat', 'Debian']
-      or ansible_facts['distribution'] == 'Amazon'
+      - ansible_facts['os_family'] in ['RedHat', 'Debian'] or ansible_facts['distribution'] == 'Amazon'
     fail_msg: >-
       The node_exporter role supports RedHat, Debian, and Amazon Linux;
       got distribution='{{ ansible_facts['distribution'] }}',
@@ -21,7 +20,7 @@
   ansible.builtin.include_vars: "{{ _pg_os_variant }}.yml"
 
 - name: Install node_exporter
-  ansible.builtin.include_tasks: "install-{{ _pg_os_variant }}.yml"
+  ansible.builtin.include_tasks: install-{{ _pg_os_variant }}.yml
 
 - name: Configure exporter service
   ansible.builtin.include_tasks: configure.yml

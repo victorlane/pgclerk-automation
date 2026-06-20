@@ -49,54 +49,54 @@
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Assert slot_action is supported
-    ansible.builtin.assert:
-      that: slot_action | default('list') in ['list', 'create', 'drop', 'advance']
-      fail_msg: >-
-        slot_action must be one of: list, create, drop, advance.
-        Got '{{ slot_action | default('list') }}'.
+    - name: Assert slot_action is supported
+      ansible.builtin.assert:
+        that: slot_action | default('list') in ['list', 'create', 'drop', 'advance']
+        fail_msg: >-
+          slot_action must be one of: list, create, drop, advance.
+          Got '{{ slot_action | default('list') }}'.
 
-  - name: Refuse to run without --limit (destructive actions)
-    when: (slot_action | default('list')) in ['create', 'drop', 'advance']
-    ansible.builtin.assert:
-      that: ansible_limit is defined
-      fail_msg: >-
-        Refusing to {{ slot_action }} replication slots across the entire
-        inventory. Re-run with --limit <pg_host>.
+    - name: Refuse to run without --limit (destructive actions)
+      when: (slot_action | default('list')) in ['create', 'drop', 'advance']
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          Refusing to {{ slot_action }} replication slots across the entire
+          inventory. Re-run with --limit <pg_host>.
 
-  - name: Assert slot_name for non-list actions
-    when: (slot_action | default('list')) in ['create', 'drop', 'advance']
-    ansible.builtin.assert:
-      that:
-      - slot_name is defined
-      - slot_name | length > 0
-      fail_msg: "slot_name is required for action '{{ slot_action }}'."
+    - name: Assert slot_name for non-list actions
+      when: (slot_action | default('list')) in ['create', 'drop', 'advance']
+      ansible.builtin.assert:
+        that:
+          - slot_name is defined
+          - slot_name | length > 0
+        fail_msg: slot_name is required for action '{{ slot_action }}'.
 
-  - name: Assert slot_type for create/advance
-    when: (slot_action | default('list')) in ['create', 'advance']
-    ansible.builtin.assert:
-      that:
-      - slot_type is defined
-      - slot_type in ['physical', 'logical']
-      fail_msg: "slot_type must be 'physical' or 'logical'."
+    - name: Assert slot_type for create/advance
+      when: (slot_action | default('list')) in ['create', 'advance']
+      ansible.builtin.assert:
+        that:
+          - slot_type is defined
+          - slot_type in ['physical', 'logical']
+        fail_msg: slot_type must be 'physical' or 'logical'.
 
-  - name: Assert logical slot needs a database (create/advance)
-    when:
-    - (slot_action | default('list')) in ['create', 'advance']
-    - slot_type | default('physical') == 'logical'
-    ansible.builtin.assert:
-      that:
-      - slot_database is defined
-      - slot_database | length > 0
-      fail_msg: "slot_database is required for logical slot operations."
+    - name: Assert logical slot needs a database (create/advance)
+      when:
+        - (slot_action | default('list')) in ['create', 'advance']
+        - slot_type | default('physical') == 'logical'
+      ansible.builtin.assert:
+        that:
+          - slot_database is defined
+          - slot_database | length > 0
+        fail_msg: slot_database is required for logical slot operations.
 
-  - name: Assert slot_advance_lsn for advance
-    when: (slot_action | default('list')) == 'advance'
-    ansible.builtin.assert:
-      that:
-      - slot_advance_lsn is defined
-      - slot_advance_lsn | length > 0
-      fail_msg: "slot_advance_lsn is required for action 'advance'."
+    - name: Assert slot_advance_lsn for advance
+      when: (slot_action | default('list')) == 'advance'
+      ansible.builtin.assert:
+        that:
+          - slot_advance_lsn is defined
+          - slot_advance_lsn | length > 0
+        fail_msg: slot_advance_lsn is required for action 'advance'.
 
 - name: Manage replication slots
   hosts: postgres_servers
@@ -110,172 +110,172 @@
   tasks:
   # --- LIST ---------------------------------------------------------------
 
-  - name: List replication slots with lag in bytes and seconds
-    when: slot_action == 'list'
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: >-
-        SELECT
-          s.slot_name,
-          s.slot_type,
-          s.database,
-          s.plugin,
-          s.active,
-          s.restart_lsn,
-          s.confirmed_flush_lsn,
-          pg_wal_lsn_diff(pg_current_wal_lsn(), s.restart_lsn) AS lag_bytes_restart,
-          CASE WHEN s.confirmed_flush_lsn IS NOT NULL
-               THEN pg_wal_lsn_diff(pg_current_wal_lsn(), s.confirmed_flush_lsn)
-               ELSE NULL
-          END AS lag_bytes_flush,
-          EXTRACT(EPOCH FROM (now() - r.last_msg_receipt_time))::int AS lag_seconds
-        FROM pg_replication_slots s
-        LEFT JOIN pg_stat_replication r
-               ON r.application_name = s.slot_name
-        ORDER BY s.slot_name
-    register: _slot_list
+    - name: List replication slots with lag in bytes and seconds
+      when: slot_action == 'list'
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT
+            s.slot_name,
+            s.slot_type,
+            s.database,
+            s.plugin,
+            s.active,
+            s.restart_lsn,
+            s.confirmed_flush_lsn,
+            pg_wal_lsn_diff(pg_current_wal_lsn(), s.restart_lsn) AS lag_bytes_restart,
+            CASE WHEN s.confirmed_flush_lsn IS NOT NULL
+                 THEN pg_wal_lsn_diff(pg_current_wal_lsn(), s.confirmed_flush_lsn)
+                 ELSE NULL
+            END AS lag_bytes_flush,
+            EXTRACT(EPOCH FROM (now() - r.last_msg_receipt_time))::int AS lag_seconds
+          FROM pg_replication_slots s
+          LEFT JOIN pg_stat_replication r
+                 ON r.application_name = s.slot_name
+          ORDER BY s.slot_name
+      register: _slot_list
 
-  - name: Display slot list
-    when: slot_action == 'list'
-    ansible.builtin.debug:
-      var: _slot_list.query_result
+    - name: Display slot list
+      when: slot_action == 'list'
+      ansible.builtin.debug:
+        var: _slot_list.query_result
 
-  # --- CREATE -------------------------------------------------------------
+    # --- CREATE -------------------------------------------------------------
 
-  - name: Check whether slot already exists (create)
-    when: slot_action == 'create'
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SELECT slot_name FROM pg_replication_slots WHERE slot_name = %(n)s"
-      named_args:
-        n: "{{ slot_name }}"
-    register: _slot_exists_pre
+    - name: Check whether slot already exists (create)
+      when: slot_action == 'create'
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SELECT slot_name FROM pg_replication_slots WHERE slot_name = %(n)s
+        named_args:
+          false: "{{ slot_name }}"
+      register: _slot_exists_pre
 
-  - name: Create physical slot (idempotent via existence check)
-    when:
-    - slot_action == 'create'
-    - slot_type == 'physical'
-    - (_slot_exists_pre.query_result | default([])) | length == 0
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SELECT pg_create_physical_replication_slot(%(n)s)"
-      named_args:
-        n: "{{ slot_name }}"
-    changed_when: true
+    - name: Create physical slot (idempotent via existence check)
+      when:
+        - slot_action == 'create'
+        - slot_type == 'physical'
+        - (_slot_exists_pre.query_result | default([])) | length == 0
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SELECT pg_create_physical_replication_slot(%(n)s)
+        named_args:
+          false: "{{ slot_name }}"
+      changed_when: true
 
-  - name: Create logical slot (idempotent via existence check)
-    when:
-    - slot_action == 'create'
-    - slot_type == 'logical'
-    - (_slot_exists_pre.query_result | default([])) | length == 0
-    community.postgresql.postgresql_query:
-      db: "{{ slot_database }}"
-      query: "SELECT pg_create_logical_replication_slot(%(n)s, %(p)s)"
-      named_args:
-        n: "{{ slot_name }}"
-        p: "{{ slot_plugin }}"
-    changed_when: true
+    - name: Create logical slot (idempotent via existence check)
+      when:
+        - slot_action == 'create'
+        - slot_type == 'logical'
+        - (_slot_exists_pre.query_result | default([])) | length == 0
+      community.postgresql.postgresql_query:
+        db: "{{ slot_database }}"
+        query: SELECT pg_create_logical_replication_slot(%(n)s, %(p)s)
+        named_args:
+          false: "{{ slot_name }}"
+          p: "{{ slot_plugin }}"
+      changed_when: true
 
-  - name: Note when create was a no-op (slot already existed)
-    when:
-    - slot_action == 'create'
-    - (_slot_exists_pre.query_result | default([])) | length > 0
-    ansible.builtin.debug:
-      msg: "Slot '{{ slot_name }}' already exists on {{ inventory_hostname }}; no action taken."
+    - name: Note when create was a no-op (slot already existed)
+      when:
+        - slot_action == 'create'
+        - (_slot_exists_pre.query_result | default([])) | length > 0
+      ansible.builtin.debug:
+        msg: Slot '{{ slot_name }}' already exists on {{ inventory_hostname }}; no action taken.
 
-  # --- DROP ---------------------------------------------------------------
+    # --- DROP ---------------------------------------------------------------
 
-  - name: Inspect slot before drop
-    when: slot_action == 'drop'
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: >-
-        SELECT slot_name, slot_type, active, confirmed_flush_lsn,
-               pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS lag_bytes
-        FROM pg_replication_slots
-        WHERE slot_name = %(n)s
-      named_args:
-        n: "{{ slot_name }}"
-    register: _slot_drop_pre
+    - name: Inspect slot before drop
+      when: slot_action == 'drop'
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT slot_name, slot_type, active, confirmed_flush_lsn,
+                 pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS lag_bytes
+          FROM pg_replication_slots
+          WHERE slot_name = %(n)s
+        named_args:
+          false: "{{ slot_name }}"
+      register: _slot_drop_pre
 
-  - name: Refuse to drop slot when confirmed_flush_lsn is NULL (data loss risk)
-    when:
-    - slot_action == 'drop'
-    - (_slot_drop_pre.query_result | default([])) | length > 0
-    - (_slot_drop_pre.query_result | first).confirmed_flush_lsn is none
-    - not (slot_force | bool)
-    ansible.builtin.assert:
-      that: false
-      fail_msg: >-
-        Slot '{{ slot_name }}' has confirmed_flush_lsn=NULL; the consumer
-        has never flushed. Dropping now means whatever it has decoded so
-        far is lost. Set slot_force=true if that's intentional.
+    - name: Refuse to drop slot when confirmed_flush_lsn is NULL (data loss risk)
+      when:
+        - slot_action == 'drop'
+        - (_slot_drop_pre.query_result | default([])) | length > 0
+        - (_slot_drop_pre.query_result | first).confirmed_flush_lsn is none
+        - not (slot_force | bool)
+      ansible.builtin.assert:
+        that: false
+        fail_msg: >-
+          Slot '{{ slot_name }}' has confirmed_flush_lsn=NULL; the consumer
+          has never flushed. Dropping now means whatever it has decoded so
+          far is lost. Set slot_force=true if that's intentional.
 
-  - name: Drop replication slot
-    when:
-    - slot_action == 'drop'
-    - (_slot_drop_pre.query_result | default([])) | length > 0
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SELECT pg_drop_replication_slot(%(n)s)"
-      named_args:
-        n: "{{ slot_name }}"
-    changed_when: true
+    - name: Drop replication slot
+      when:
+        - slot_action == 'drop'
+        - (_slot_drop_pre.query_result | default([])) | length > 0
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SELECT pg_drop_replication_slot(%(n)s)
+        named_args:
+          false: "{{ slot_name }}"
+      changed_when: true
 
-  - name: Note when drop was a no-op (slot did not exist)
-    when:
-    - slot_action == 'drop'
-    - (_slot_drop_pre.query_result | default([])) | length == 0
-    ansible.builtin.debug:
-      msg: "Slot '{{ slot_name }}' does not exist on {{ inventory_hostname }}; no action taken."
+    - name: Note when drop was a no-op (slot did not exist)
+      when:
+        - slot_action == 'drop'
+        - (_slot_drop_pre.query_result | default([])) | length == 0
+      ansible.builtin.debug:
+        msg: Slot '{{ slot_name }}' does not exist on {{ inventory_hostname }}; no action taken.
 
-  # --- ADVANCE ------------------------------------------------------------
+    # --- ADVANCE ------------------------------------------------------------
 
-  - name: Advance physical slot
-    when:
-    - slot_action == 'advance'
-    - slot_type == 'physical'
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SELECT pg_replication_slot_advance(%(n)s, %(l)s)"
-      named_args:
-        n: "{{ slot_name }}"
-        l: "{{ slot_advance_lsn }}"
-    changed_when: true
+    - name: Advance physical slot
+      when:
+        - slot_action == 'advance'
+        - slot_type == 'physical'
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SELECT pg_replication_slot_advance(%(n)s, %(l)s)
+        named_args:
+          false: "{{ slot_name }}"
+          l: "{{ slot_advance_lsn }}"
+      changed_when: true
 
-  - name: Advance logical slot
-    when:
-    - slot_action == 'advance'
-    - slot_type == 'logical'
-    community.postgresql.postgresql_query:
-      db: "{{ slot_database }}"
-      query: "SELECT pg_replication_slot_advance(%(n)s, %(l)s)"
-      named_args:
-        n: "{{ slot_name }}"
-        l: "{{ slot_advance_lsn }}"
-    changed_when: true
+    - name: Advance logical slot
+      when:
+        - slot_action == 'advance'
+        - slot_type == 'logical'
+      community.postgresql.postgresql_query:
+        db: "{{ slot_database }}"
+        query: SELECT pg_replication_slot_advance(%(n)s, %(l)s)
+        named_args:
+          false: "{{ slot_name }}"
+          l: "{{ slot_advance_lsn }}"
+      changed_when: true
 
-  # --- Post-action snapshot ----------------------------------------------
+    # --- Post-action snapshot ----------------------------------------------
 
-  - name: Re-list slots after action (for create/drop/advance)
-    when: slot_action in ['create', 'drop', 'advance']
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: >-
-        SELECT slot_name, slot_type, database, plugin, active,
-               restart_lsn, confirmed_flush_lsn
-        FROM pg_replication_slots
-        ORDER BY slot_name
-    register: _slot_list_post
+    - name: Re-list slots after action (for create/drop/advance)
+      when: slot_action in ['create', 'drop', 'advance']
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT slot_name, slot_type, database, plugin, active,
+                 restart_lsn, confirmed_flush_lsn
+          FROM pg_replication_slots
+          ORDER BY slot_name
+      register: _slot_list_post
 
-  - name: Surface slot state after action
-    when: slot_action in ['create', 'drop', 'advance']
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "Slot {{ slot_action }} on {{ inventory_hostname }}"
-      - "  Slot name : {{ slot_name }}"
-      - "  Slot type : {{ slot_type | default('-') }}"
-      - "  Current slots:"
-      - "{{ _slot_list_post.query_result }}"
-      - "########################################################################"
+    - name: Surface slot state after action
+      when: slot_action in ['create', 'drop', 'advance']
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - Slot {{ slot_action }} on {{ inventory_hostname }}
+          - "  Slot name : {{ slot_name }}"
+          - "  Slot type : {{ slot_type | default('-') }}"
+          - "  Current slots:"
+          - "{{ _slot_list_post.query_result }}"
+          - "########################################################################"

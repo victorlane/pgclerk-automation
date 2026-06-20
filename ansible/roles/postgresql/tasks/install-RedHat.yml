@@ -11,7 +11,8 @@
 # disable_gpg_check is needed because the signing key isn't installed yet.
 - name: Install PGDG RPM repository
   ansible.builtin.dnf:
-    name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_facts['distribution_major_version'] }}-{{ _pgdg_repo_arch }}/pgdg-redhat-repo-latest.noarch.rpm"
+    name: https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_facts['distribution_major_version'] }}-{{ _pgdg_repo_arch
+      }}/pgdg-redhat-repo-latest.noarch.rpm
     state: present
     disable_gpg_check: true
 
@@ -19,26 +20,26 @@
   when: ansible_facts['architecture'] == 'aarch64'
   ansible.builtin.get_url:
     url: "{{ item.url }}"
-    dest: "/etc/pki/rpm-gpg/{{ item.dest }}"
+    dest: /etc/pki/rpm-gpg/{{ item.dest }}
     owner: root
     group: root
     mode: "0644"
   loop:
     # Signs repomd.xml (used by repo_gpgcheck=1)
-  - url: https://download.postgresql.org/pub/repos/yum/keys/PGDG-RPM-GPG-KEY-AARCH64-RHEL
-    dest: PGDG-RPM-GPG-KEY-AARCH64-RHEL
+    - url: https://download.postgresql.org/pub/repos/yum/keys/PGDG-RPM-GPG-KEY-AARCH64-RHEL
+      dest: PGDG-RPM-GPG-KEY-AARCH64-RHEL
     # Signs the package RPMs themselves (used by gpgcheck=1)
-  - url: "https://download.postgresql.org/pub/repos/yum/keys/RPM-GPG-KEY-PGDG-AARCH64-RHEL{{ ansible_facts['distribution_major_version'] }}"
-    dest: "RPM-GPG-KEY-PGDG-AARCH64-RHEL{{ ansible_facts['distribution_major_version'] }}"
+    - url: https://download.postgresql.org/pub/repos/yum/keys/RPM-GPG-KEY-PGDG-AARCH64-RHEL{{ ansible_facts['distribution_major_version'] }}
+      dest: RPM-GPG-KEY-PGDG-AARCH64-RHEL{{ ansible_facts['distribution_major_version'] }}
 
 - name: Import PGDG aarch64 keys into rpm keyring
   when: ansible_facts['architecture'] == 'aarch64'
   ansible.builtin.rpm_key:
-    key: "/etc/pki/rpm-gpg/{{ item }}"
+    key: /etc/pki/rpm-gpg/{{ item }}
     state: present
   loop:
-  - PGDG-RPM-GPG-KEY-AARCH64-RHEL
-  - "RPM-GPG-KEY-PGDG-AARCH64-RHEL{{ ansible_facts['distribution_major_version'] }}"
+    - PGDG-RPM-GPG-KEY-AARCH64-RHEL
+    - RPM-GPG-KEY-PGDG-AARCH64-RHEL{{ ansible_facts['distribution_major_version'] }}
 
 # The repo RPM points gpgkey= at PGDG-RPM-GPG-KEY-RHEL (x86_64). On aarch64
 # rewrite it to list both aarch64 keys so dnf picks the right one per check.
@@ -46,8 +47,10 @@
   when: ansible_facts['architecture'] == 'aarch64'
   ansible.builtin.replace:
     path: /etc/yum.repos.d/pgdg-redhat-all.repo
-    regexp: '^gpgkey=file:///etc/pki/rpm-gpg/(?:PGDG-RPM-GPG-KEY-RHEL|PGDG-RPM-GPG-KEY-AARCH64-RHEL|RPM-GPG-KEY-PGDG-AARCH64-RHEL\d+)(?:\s+file:///etc/pki/rpm-gpg/\S+)*\s*$'
-    replace: "gpgkey=file:///etc/pki/rpm-gpg/PGDG-RPM-GPG-KEY-AARCH64-RHEL file:///etc/pki/rpm-gpg/RPM-GPG-KEY-PGDG-AARCH64-RHEL{{ ansible_facts['distribution_major_version'] }}"
+    regexp:
+      ^gpgkey=file:///etc/pki/rpm-gpg/(?:PGDG-RPM-GPG-KEY-RHEL|PGDG-RPM-GPG-KEY-AARCH64-RHEL|RPM-GPG-KEY-PGDG-AARCH64-RHEL\d+)(?:\s+file:///etc/pki/rpm-gpg/\S+)*\s*$
+    replace: gpgkey=file:///etc/pki/rpm-gpg/PGDG-RPM-GPG-KEY-AARCH64-RHEL file:///etc/pki/rpm-gpg/RPM-GPG-KEY-PGDG-AARCH64-RHEL{{
+      ansible_facts['distribution_major_version'] }}
   register: _pgdg_repo_keypatch
 
 - name: Expire DNF metadata after switching PGDG keys
@@ -86,36 +89,37 @@
 - name: Initialize PostgreSQL cluster (libc locale)
   ansible.builtin.command:
     argv:
-    - "/usr/pgsql-{{ postgresql_version }}/bin/postgresql-{{ postgresql_version }}-setup"
-    - initdb
+      - /usr/pgsql-{{ postgresql_version }}/bin/postgresql-{{ postgresql_version }}-setup
+      - initdb
   environment:
-    PGSETUP_INITDB_OPTIONS: "--locale={{ postgresql_locale }}"
+    PGSETUP_INITDB_OPTIONS: --locale={{ postgresql_locale }}
   when:
-  - not pg_data_initialized.stat.exists
-  - postgresql_ha_mode == 'standalone'
-  - postgresql_locale_provider == 'libc'
+    - not pg_data_initialized.stat.exists
+    - postgresql_ha_mode == 'standalone'
+    - postgresql_locale_provider == 'libc'
   register: _pg_initdb_libc
 
 - name: Initialize PostgreSQL cluster (ICU locale)
   ansible.builtin.command:
     argv:
-    - "/usr/pgsql-{{ postgresql_version }}/bin/postgresql-{{ postgresql_version }}-setup"
-    - initdb
+      - /usr/pgsql-{{ postgresql_version }}/bin/postgresql-{{ postgresql_version }}-setup
+      - initdb
   environment:
-    PGSETUP_INITDB_OPTIONS: "--locale-provider=icu --icu-locale={{ postgresql_icu_locale }} --locale={{ postgresql_locale }}"
+    PGSETUP_INITDB_OPTIONS: --locale-provider=icu --icu-locale={{ postgresql_icu_locale }} --locale={{ postgresql_locale }}
   when:
-  - not pg_data_initialized.stat.exists
-  - postgresql_ha_mode == 'standalone'
-  - postgresql_locale_provider == 'icu'
+    - not pg_data_initialized.stat.exists
+    - postgresql_ha_mode == 'standalone'
+    - postgresql_locale_provider == 'icu'
   register: _pg_initdb_icu
 
 - name: Write initdb output to install log
   ansible.builtin.copy:
-    content: "{{ (_pg_initdb_libc.stdout | default('')) ~ (_pg_initdb_icu.stdout | default('')) }}\n{{ (_pg_initdb_libc.stderr | default('')) ~ (_pg_initdb_icu.stderr | default('')) }}"
+    content: "{{ (_pg_initdb_libc.stdout | default('')) ~ (_pg_initdb_icu.stdout | default('')) }}\n{{ (_pg_initdb_libc.stderr | default('')) ~ (_pg_initdb_icu.stderr
+      | default('')) }}"
     dest: "{{ postgresql_install_log }}"
     owner: root
     group: root
     mode: "0644"
   when:
-  - not pg_data_initialized.stat.exists
-  - postgresql_ha_mode == 'standalone'
+    - not pg_data_initialized.stat.exists
+    - postgresql_ha_mode == 'standalone'

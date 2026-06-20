@@ -40,7 +40,7 @@
 - name: Resolve effective CA paths on the controller
   ansible.builtin.set_fact:
     _etcd_tls_ca_cert_path: "{{ etcd_tls_ca_cert if _etcd_tls_ca_supplied else (etcd_tls_local_pki_dir ~ '/ca.crt') }}"
-    _etcd_tls_ca_key_path:  "{{ etcd_tls_ca_key  if _etcd_tls_ca_supplied else (etcd_tls_local_pki_dir ~ '/ca.key') }}"
+    _etcd_tls_ca_key_path: "{{ etcd_tls_ca_key  if _etcd_tls_ca_supplied else (etcd_tls_local_pki_dir ~ '/ca.key') }}"
 
 - name: Generate CA private key (controller, persisted)
   community.crypto.openssl_privatekey:
@@ -59,11 +59,11 @@
     common_name: "{{ etcd_tls_ca_common_name }}"
     organization_name: "{{ etcd_tls_ca_organisation }}"
     basic_constraints:
-    - "CA:TRUE"
+      - CA:TRUE
     basic_constraints_critical: true
     key_usage:
-    - keyCertSign
-    - cRLSign
+      - keyCertSign
+      - cRLSign
     key_usage_critical: true
   delegate_to: localhost
   run_once: true
@@ -76,7 +76,7 @@
     privatekey_path: "{{ _etcd_tls_ca_key_path }}"
     csr_path: "{{ etcd_tls_local_pki_dir }}/ca.csr"
     provider: selfsigned
-    selfsigned_not_after: "+{{ etcd_tls_ca_days }}d"
+    selfsigned_not_after: +{{ etcd_tls_ca_days }}d
   delegate_to: localhost
   run_once: true
   become: false
@@ -111,15 +111,15 @@
   community.crypto.openssl_csr:
     path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-server.csr"
     privatekey_path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-server.key"
-    common_name: "etcd-{{ inventory_hostname }}"
+    common_name: etcd-{{ inventory_hostname }}
     organization_name: "{{ etcd_tls_ca_organisation }}"
     subject_alt_name: "{{ _etcd_tls_sans }}"
     extended_key_usage:
-    - serverAuth
-    - clientAuth
+      - serverAuth
+      - clientAuth
     key_usage:
-    - digitalSignature
-    - keyEncipherment
+      - digitalSignature
+      - keyEncipherment
   delegate_to: localhost
   become: false
 
@@ -130,7 +130,7 @@
     ownca_path: "{{ _etcd_tls_ca_cert_path }}"
     ownca_privatekey_path: "{{ _etcd_tls_ca_key_path }}"
     provider: ownca
-    ownca_not_after: "+{{ etcd_tls_cert_days }}d"
+    ownca_not_after: +{{ etcd_tls_cert_days }}d
   delegate_to: localhost
   become: false
 
@@ -146,15 +146,15 @@
   community.crypto.openssl_csr:
     path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-peer.csr"
     privatekey_path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-peer.key"
-    common_name: "etcd-{{ inventory_hostname }}-peer"
+    common_name: etcd-{{ inventory_hostname }}-peer
     organization_name: "{{ etcd_tls_ca_organisation }}"
     subject_alt_name: "{{ _etcd_tls_sans }}"
     extended_key_usage:
-    - serverAuth
-    - clientAuth
+      - serverAuth
+      - clientAuth
     key_usage:
-    - digitalSignature
-    - keyEncipherment
+      - digitalSignature
+      - keyEncipherment
   delegate_to: localhost
   become: false
 
@@ -165,7 +165,7 @@
     ownca_path: "{{ _etcd_tls_ca_cert_path }}"
     ownca_privatekey_path: "{{ _etcd_tls_ca_key_path }}"
     provider: ownca
-    ownca_not_after: "+{{ etcd_tls_cert_days }}d"
+    ownca_not_after: +{{ etcd_tls_cert_days }}d
   delegate_to: localhost
   become: false
 
@@ -181,13 +181,13 @@
   community.crypto.openssl_csr:
     path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-patroni-client.csr"
     privatekey_path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-patroni-client.key"
-    common_name: "patroni-{{ inventory_hostname }}"
+    common_name: patroni-{{ inventory_hostname }}
     organization_name: "{{ etcd_tls_ca_organisation }}"
     extended_key_usage:
-    - clientAuth
+      - clientAuth
     key_usage:
-    - digitalSignature
-    - keyEncipherment
+      - digitalSignature
+      - keyEncipherment
   delegate_to: localhost
   become: false
 
@@ -198,7 +198,7 @@
     ownca_path: "{{ _etcd_tls_ca_cert_path }}"
     ownca_privatekey_path: "{{ _etcd_tls_ca_key_path }}"
     provider: ownca
-    ownca_not_after: "+{{ etcd_tls_cert_days }}d"
+    ownca_not_after: +{{ etcd_tls_cert_days }}d
   delegate_to: localhost
   become: false
 
@@ -231,10 +231,10 @@
     group: "{{ etcd_group }}"
     mode: "{{ item.mode }}"
   loop:
-  - { src: "server.crt", dest: "server.crt", mode: "0644" }
-  - { src: "server.key", dest: "server.key", mode: "0600" }
-  - { src: "peer.crt",   dest: "peer.crt",   mode: "0644" }
-  - { src: "peer.key",   dest: "peer.key",   mode: "0600" }
+    - { src: server.crt, dest: server.crt, mode: "0644" }
+    - { src: server.key, dest: server.key, mode: "0600" }
+    - { src: peer.crt, dest: peer.crt, mode: "0644" }
+    - { src: peer.key, dest: peer.key, mode: "0600" }
   notify: etcd restart
 
 # Patroni client material lands in /etc/patroni/etcd-tls; the patroni role's
@@ -259,10 +259,10 @@
 - name: Copy Patroni client cert + key
   ansible.builtin.copy:
     src: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-patroni-client.{{ item.ext }}"
-    dest: "/etc/patroni/etcd-tls/client.{{ item.ext }}"
+    dest: /etc/patroni/etcd-tls/client.{{ item.ext }}
     owner: postgres
     group: postgres
     mode: "{{ item.mode }}"
   loop:
-  - { ext: "crt", mode: "0644" }
-  - { ext: "key", mode: "0600" }
+    - { ext: crt, mode: "0644" }
+    - { ext: key, mode: "0600" }

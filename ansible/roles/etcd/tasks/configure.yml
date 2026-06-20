@@ -39,8 +39,8 @@
     group: root
     mode: "0644"
   notify:
-  - etcd reload systemd
-  - etcd restart
+    - etcd reload systemd
+    - etcd restart
 
 - name: Flush handlers so etcd is running before health check
   ansible.builtin.meta: flush_handlers

@@ -27,36 +27,37 @@
 - name: Initialize PostgreSQL cluster (libc locale)
   ansible.builtin.command:
     argv:
-    - /usr/bin/postgresql-setup
-    - --initdb
+      - /usr/bin/postgresql-setup
+      - --initdb
   environment:
-    PGSETUP_INITDB_OPTIONS: "--locale={{ postgresql_locale }}"
+    PGSETUP_INITDB_OPTIONS: --locale={{ postgresql_locale }}
   when:
-  - not pg_data_initialized.stat.exists
-  - postgresql_ha_mode == 'standalone'
-  - postgresql_locale_provider == 'libc'
+    - not pg_data_initialized.stat.exists
+    - postgresql_ha_mode == 'standalone'
+    - postgresql_locale_provider == 'libc'
   register: _pg_initdb_libc
 
 - name: Initialize PostgreSQL cluster (ICU locale)
   ansible.builtin.command:
     argv:
-    - /usr/bin/postgresql-setup
-    - --initdb
+      - /usr/bin/postgresql-setup
+      - --initdb
   environment:
-    PGSETUP_INITDB_OPTIONS: "--locale-provider=icu --icu-locale={{ postgresql_icu_locale }} --locale={{ postgresql_locale }}"
+    PGSETUP_INITDB_OPTIONS: --locale-provider=icu --icu-locale={{ postgresql_icu_locale }} --locale={{ postgresql_locale }}
   when:
-  - not pg_data_initialized.stat.exists
-  - postgresql_ha_mode == 'standalone'
-  - postgresql_locale_provider == 'icu'
+    - not pg_data_initialized.stat.exists
+    - postgresql_ha_mode == 'standalone'
+    - postgresql_locale_provider == 'icu'
   register: _pg_initdb_icu
 
 - name: Write initdb output to install log
   ansible.builtin.copy:
-    content: "{{ (_pg_initdb_libc.stdout | default('')) ~ (_pg_initdb_icu.stdout | default('')) }}\n{{ (_pg_initdb_libc.stderr | default('')) ~ (_pg_initdb_icu.stderr | default('')) }}"
+    content: "{{ (_pg_initdb_libc.stdout | default('')) ~ (_pg_initdb_icu.stdout | default('')) }}\n{{ (_pg_initdb_libc.stderr | default('')) ~ (_pg_initdb_icu.stderr
+      | default('')) }}"
     dest: "{{ postgresql_install_log }}"
     owner: root
     group: root
     mode: "0644"
   when:
-  - not pg_data_initialized.stat.exists
-  - postgresql_ha_mode == 'standalone'
+    - not pg_data_initialized.stat.exists
+    - postgresql_ha_mode == 'standalone'

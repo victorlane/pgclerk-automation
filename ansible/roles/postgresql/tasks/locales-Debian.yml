@@ -24,7 +24,7 @@
 - name: Ensure each requested locale is enabled in /etc/locale.gen
   ansible.builtin.lineinfile:
     path: /etc/locale.gen
-    regexp: "^#?\\s*{{ item | regex_escape }}\\s+{{ (item.split('.')[1] | default('UTF-8')) | regex_escape }}\\s*$"
+    regexp: ^#?\s*{{ item | regex_escape }}\s+{{ (item.split('.')[1] | default('UTF-8')) | regex_escape }}\s*$
     line: "{{ item }} {{ item.split('.')[1] | default('UTF-8') }}"
     state: present
   loop: "{{ postgresql_effective_locales }}"

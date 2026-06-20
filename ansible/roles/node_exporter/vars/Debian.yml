@@ -3,6 +3,6 @@
 # /usr/bin/prometheus-node-exporter (different name from upstream). We
 # write our own systemd unit and ignore the package's shipped one.
 node_exporter_packages:
-- prometheus-node-exporter
+  - prometheus-node-exporter
 
 node_exporter_package_bin: /usr/bin/prometheus-node-exporter

@@ -28,60 +28,60 @@
   become: true
   gather_facts: false
   vars:
-    user_role_attrs: "LOGIN"
+    user_role_attrs: LOGIN
     user_grants: []
   tasks:
-  - name: Refuse to run without an explicit --limit
-    ansible.builtin.assert:
-      that: ansible_limit is defined
-      fail_msg: >-
-        Refusing to run add-user against the entire inventory. Re-run with
-        --limit <customer_group_or_host>.
+    - name: Refuse to run without an explicit --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          Refusing to run add-user against the entire inventory. Re-run with
+          --limit <customer_group_or_host>.
 
-  - name: Assert required vars are defined
-    ansible.builtin.assert:
-      that:
-      - user_name is defined
-      - user_name | length > 0
-      - user_password is defined
-      - user_password | length > 0
-      fail_msg: "user_name and user_password must both be provided."
-    no_log: true
+    - name: Assert required vars are defined
+      ansible.builtin.assert:
+        that:
+          - user_name is defined
+          - user_name | length > 0
+          - user_password is defined
+          - user_password | length > 0
+        fail_msg: user_name and user_password must both be provided.
+      no_log: true
 
-  - name: Ensure role exists with desired attributes
-    become_user: postgres
-    community.postgresql.postgresql_user:
-      name: "{{ user_name }}"
-      password: "{{ user_password }}"
-      role_attr_flags: "{{ user_role_attrs }}"
-      state: present
-    no_log: true
+    - name: Ensure role exists with desired attributes
+      become_user: postgres
+      community.postgresql.postgresql_user:
+        name: "{{ user_name }}"
+        password: "{{ user_password }}"
+        role_attr_flags: "{{ user_role_attrs }}"
+        state: present
+      no_log: true
 
-  - name: Grant per-database privileges
-    become_user: postgres
-    community.postgresql.postgresql_privs:
-      login_db: "{{ item.db }}"
-      roles: "{{ user_name }}"
-      type: database
-      privs: "{{ item.priv }}"
-      state: present
-    loop: "{{ user_grants }}"
-    loop_control:
-      label: "{{ item.db }}"
-    no_log: true
+    - name: Grant per-database privileges
+      become_user: postgres
+      community.postgresql.postgresql_privs:
+        login_db: "{{ item.db }}"
+        roles: "{{ user_name }}"
+        type: database
+        privs: "{{ item.priv }}"
+        state: present
+      loop: "{{ user_grants }}"
+      loop_control:
+        label: "{{ item.db }}"
+      no_log: true
 
-  - name: Show role summary (no password)
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: >-
-        SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolcanlogin,
-               rolreplication, rolconnlimit, rolvaliduntil
-        FROM pg_roles WHERE rolname = %s
-      positional_args:
-      - "{{ user_name }}"
-    register: _role_row
+    - name: Show role summary (no password)
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolcanlogin,
+                 rolreplication, rolconnlimit, rolvaliduntil
+          FROM pg_roles WHERE rolname = %s
+        positional_args:
+          - "{{ user_name }}"
+      register: _role_row
 
-  - name: Display role row
-    ansible.builtin.debug:
-      var: _role_row.query_result
+    - name: Display role row
+      ansible.builtin.debug:
+        var: _role_row.query_result

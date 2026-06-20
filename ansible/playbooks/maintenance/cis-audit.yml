@@ -31,305 +31,227 @@
   vars:
     cis_login_user: postgres
     cis_login_db: postgres
-    cis_report_path: "/tmp/pgclerk-cis-report-{{ inventory_hostname }}.json"
+    cis_report_path: /tmp/pgclerk-cis-report-{{ inventory_hostname }}.json
   tasks:
-  - name: Resolve OS variant + per-OS PG paths
-    ansible.builtin.set_fact:
-      _cis_os_variant: >-
-        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
-           else ansible_facts['os_family'] }}
+    - name: Resolve OS variant + per-OS PG paths
+      ansible.builtin.set_fact:
+        _cis_os_variant: >-
+          {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+             else ansible_facts['os_family'] }}
 
-  - name: Load postgresql OS-specific variables
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _cis_os_variant }}.yml"
-      name: _cis_pg_vars
+    - name: Load postgresql OS-specific variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _cis_os_variant }}.yml"
+        name: _cis_pg_vars
 
-  - name: Initialise findings list
-    ansible.builtin.set_fact:
-      _cis_findings: []
+    - name: Initialise findings list
+      ansible.builtin.set_fact:
+        _cis_findings: []
 
-  # ----- GUC checks (one SHOW per setting) ---------------------------------
+    # ----- GUC checks (one SHOW per setting) ---------------------------------
 
-  - name: Read security-relevant GUCs
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: "{{ cis_login_db }}"
-      query: >-
-        SELECT name, setting FROM pg_settings WHERE name IN (
-          'password_encryption', 'ssl', 'log_connections',
-          'log_disconnections', 'log_hostname', 'log_line_prefix',
-          'log_statement', 'shared_preload_libraries', 'row_security'
-        )
-    register: _cis_gucs
-    failed_when:
-    - _cis_gucs.query_result is not defined
+    - name: Read security-relevant GUCs
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: "{{ cis_login_db }}"
+        query: >-
+          SELECT name, setting FROM pg_settings WHERE name IN (
+            'password_encryption', 'ssl', 'log_connections',
+            'log_disconnections', 'log_hostname', 'log_line_prefix',
+            'log_statement', 'shared_preload_libraries', 'row_security'
+          )
+      register: _cis_gucs
+      failed_when:
+        - _cis_gucs.query_result is not defined
 
-  - name: Index GUC results by name
-    ansible.builtin.set_fact:
-      _cis_guc_map: >-
-        {{ dict(
-             (_cis_gucs.query_result | default([]))
-             | map(attribute='name') | list
-             | zip(
+    - name: Index GUC results by name
+      ansible.builtin.set_fact:
+        _cis_guc_map: >-
+          {{ dict(
                (_cis_gucs.query_result | default([]))
-               | map(attribute='setting') | list
-             )
-           ) }}
+               | map(attribute='name') | list
+               | zip(
+                 (_cis_gucs.query_result | default([]))
+                 | map(attribute='setting') | list
+               )
+             ) }}
 
-  - name: Check password_encryption = scram-sha-256
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-password-encryption',
-        'expected': 'scram-sha-256',
-        'actual': _cis_guc_map.password_encryption | default('<unset>'),
-        'status': ('pass' if (_cis_guc_map.password_encryption | default('') == 'scram-sha-256') else 'fail'),
-        'remediation': 'ALTER SYSTEM SET password_encryption = scram-sha-256; SELECT pg_reload_conf();'
-      }] }}"
+    - name: Check password_encryption = scram-sha-256
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-password-encryption', 'expected': 'scram-sha-256', 'actual': _cis_guc_map.password_encryption | default('<unset>'),
+          'status': ('pass' if (_cis_guc_map.password_encryption | default('') == 'scram-sha-256') else 'fail'), 'remediation': 'ALTER SYSTEM SET password_encryption
+          = scram-sha-256; SELECT pg_reload_conf();'}] }}"
 
-  - name: Check ssl = on
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-ssl-on',
-        'expected': 'on',
-        'actual': _cis_guc_map.ssl | default('<unset>'),
-        'status': ('pass' if (_cis_guc_map.ssl | default('') == 'on') else 'fail'),
-        'remediation': 'Run maint-tls-bootstrap; standalone: add ssl=on + cert/key to postgresql.conf and reload.'
-      }] }}"
+    - name: Check ssl = on
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-ssl-on', 'expected': 'on', 'actual': _cis_guc_map.ssl | default('<unset>'), 'status': ('pass' if (_cis_guc_map.ssl
+          | default('') == 'on') else 'fail'), 'remediation': 'Run maint-tls-bootstrap; standalone: add ssl=on + cert/key to postgresql.conf and reload.'}] }}"
 
-  - name: Check log_connections = on
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-log-connections-on',
-        'expected': 'on',
-        'actual': _cis_guc_map.log_connections | default('<unset>'),
-        'status': ('pass' if (_cis_guc_map.log_connections | default('') == 'on') else 'fail'),
-        'remediation': 'ALTER SYSTEM SET log_connections = on; SELECT pg_reload_conf();'
-      }] }}"
+    - name: Check log_connections = on
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-log-connections-on', 'expected': 'on', 'actual': _cis_guc_map.log_connections | default('<unset>'), 'status':
+          ('pass' if (_cis_guc_map.log_connections | default('') == 'on') else 'fail'), 'remediation': 'ALTER SYSTEM SET log_connections = on; SELECT pg_reload_conf();'}]
+          }}"
 
-  - name: Check log_disconnections = on
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-log-disconnections-on',
-        'expected': 'on',
-        'actual': _cis_guc_map.log_disconnections | default('<unset>'),
-        'status': ('pass' if (_cis_guc_map.log_disconnections | default('') == 'on') else 'fail'),
-        'remediation': 'ALTER SYSTEM SET log_disconnections = on; SELECT pg_reload_conf();'
-      }] }}"
+    - name: Check log_disconnections = on
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-log-disconnections-on', 'expected': 'on', 'actual': _cis_guc_map.log_disconnections | default('<unset>'),
+          'status': ('pass' if (_cis_guc_map.log_disconnections | default('') == 'on') else 'fail'), 'remediation': 'ALTER SYSTEM SET log_disconnections = on; SELECT
+          pg_reload_conf();'}] }}"
 
-  - name: Check log_hostname = off (avoids DNS hangs + leaks)
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-log-hostname-off',
-        'expected': 'off',
-        'actual': _cis_guc_map.log_hostname | default('<unset>'),
-        'status': ('pass' if (_cis_guc_map.log_hostname | default('') == 'off') else 'fail'),
-        'remediation': 'ALTER SYSTEM SET log_hostname = off; SELECT pg_reload_conf();'
-      }] }}"
+    - name: Check log_hostname = off (avoids DNS hangs + leaks)
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-log-hostname-off', 'expected': 'off', 'actual': _cis_guc_map.log_hostname | default('<unset>'), 'status':
+          ('pass' if (_cis_guc_map.log_hostname | default('') == 'off') else 'fail'), 'remediation': 'ALTER SYSTEM SET log_hostname = off; SELECT pg_reload_conf();'}]
+          }}"
 
-  - name: Check log_line_prefix contains %m %p %u %d
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-log-line-prefix',
-        'expected': 'contains %m %p %u %d',
-        'actual': _cis_guc_map.log_line_prefix | default('<unset>'),
-        'status': ('pass' if ((
-          '%m' in (_cis_guc_map.log_line_prefix | default(''))
-          and '%p' in (_cis_guc_map.log_line_prefix | default(''))
-          and '%u' in (_cis_guc_map.log_line_prefix | default(''))
-          and '%d' in (_cis_guc_map.log_line_prefix | default(''))
-        )) else 'fail'),
-        'remediation': \"ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d '; SELECT pg_reload_conf();\"
-      }] }}"
+    - name: Check log_line_prefix contains %m %p %u %d
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-log-line-prefix', 'expected': 'contains %m %p %u %d', 'actual': _cis_guc_map.log_line_prefix | default('<unset>'),
+          'status': ('pass' if (('%m' in (_cis_guc_map.log_line_prefix | default('')) and '%p' in (_cis_guc_map.log_line_prefix | default('')) and '%u' in (_cis_guc_map.log_line_prefix
+          | default('')) and '%d' in (_cis_guc_map.log_line_prefix | default('')))) else 'fail'), 'remediation': \"ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d
+          '; SELECT pg_reload_conf();\"}] }}"
 
-  - name: Check log_statement in (ddl, mod, all)
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-log-statement',
-        'expected': 'one of: ddl, mod, all',
-        'actual': _cis_guc_map.log_statement | default('<unset>'),
-        'status': ('pass' if ((_cis_guc_map.log_statement | default('')) in ['ddl', 'mod', 'all']) else 'fail'),
-        'remediation': \"ALTER SYSTEM SET log_statement = 'ddl'; SELECT pg_reload_conf();\"
-      }] }}"
+    - name: Check log_statement in (ddl, mod, all)
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-log-statement', 'expected': 'one of: ddl, mod, all', 'actual': _cis_guc_map.log_statement | default('<unset>'),
+          'status': ('pass' if ((_cis_guc_map.log_statement | default('')) in ['ddl', 'mod', 'all']) else 'fail'), 'remediation': \"ALTER SYSTEM SET log_statement
+          = 'ddl'; SELECT pg_reload_conf();\"}] }}"
 
-  - name: Check shared_preload_libraries contains pg_stat_statements
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-spl-pg-stat-statements',
-        'expected': 'contains pg_stat_statements',
-        'actual': _cis_guc_map.shared_preload_libraries | default('<unset>'),
-        'status': ('pass' if ('pg_stat_statements' in (_cis_guc_map.shared_preload_libraries | default(''))) else 'fail'),
-        'remediation': \"ALTER SYSTEM SET shared_preload_libraries = '<existing>,pg_stat_statements'; restart required.\"
-      }] }}"
+    - name: Check shared_preload_libraries contains pg_stat_statements
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-spl-pg-stat-statements', 'expected': 'contains pg_stat_statements', 'actual': _cis_guc_map.shared_preload_libraries
+          | default('<unset>'), 'status': ('pass' if ('pg_stat_statements' in (_cis_guc_map.shared_preload_libraries | default(''))) else 'fail'), 'remediation':
+          \"ALTER SYSTEM SET shared_preload_libraries = '<existing>,pg_stat_statements'; restart required.\"}] }}"
 
-  - name: Check shared_preload_libraries contains pgaudit (when enabled)
-    when: postgresql_pgaudit_enabled | default(false) | bool
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-spl-pgaudit',
-        'expected': 'contains pgaudit (postgresql_pgaudit_enabled=true)',
-        'actual': _cis_guc_map.shared_preload_libraries | default('<unset>'),
-        'status': ('pass' if ('pgaudit' in (_cis_guc_map.shared_preload_libraries | default(''))) else 'fail'),
-        'remediation': 'Re-run the postgresql role; pgaudit package + conf line is gated on postgresql_pgaudit_enabled.'
-      }] }}"
+    - name: Check shared_preload_libraries contains pgaudit (when enabled)
+      when: postgresql_pgaudit_enabled | default(false) | bool
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-spl-pgaudit', 'expected': 'contains pgaudit (postgresql_pgaudit_enabled=true)', 'actual': _cis_guc_map.shared_preload_libraries
+          | default('<unset>'), 'status': ('pass' if ('pgaudit' in (_cis_guc_map.shared_preload_libraries | default(''))) else 'fail'), 'remediation': 'Re-run the
+          postgresql role; pgaudit package + conf line is gated on postgresql_pgaudit_enabled.'}] }}"
 
-  - name: Check row_security = on
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-row-security-on',
-        'expected': 'on',
-        'actual': _cis_guc_map.row_security | default('<unset>'),
-        'status': ('pass' if (_cis_guc_map.row_security | default('') == 'on') else 'fail'),
-        'remediation': 'ALTER SYSTEM SET row_security = on; SELECT pg_reload_conf();'
-      }] }}"
+    - name: Check row_security = on
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-row-security-on', 'expected': 'on', 'actual': _cis_guc_map.row_security | default('<unset>'), 'status':
+          ('pass' if (_cis_guc_map.row_security | default('') == 'on') else 'fail'), 'remediation': 'ALTER SYSTEM SET row_security = on; SELECT pg_reload_conf();'}]
+          }}"
 
-  # ----- pg_hba.conf : no `trust` except loopback --------------------------
+    # ----- pg_hba.conf : no `trust` except loopback --------------------------
 
-  - name: Read pg_hba.conf
-    ansible.builtin.slurp:
-      src: "{{ _cis_pg_vars.postgresql_hba_path }}"
-    register: _cis_hba_slurp
-    failed_when: false
+    - name: Read pg_hba.conf
+      ansible.builtin.slurp:
+        src: "{{ _cis_pg_vars.postgresql_hba_path }}"
+      register: _cis_hba_slurp
+      failed_when: false
 
-  - name: Detect non-loopback trust entries in pg_hba.conf
-    when: _cis_hba_slurp.content is defined
-    ansible.builtin.set_fact:
-      _cis_hba_bad_trust: >-
-        {{ (_cis_hba_slurp.content | b64decode).splitlines()
-           | reject('match', '^\\s*#')
-           | reject('match', '^\\s*$')
-           | select('search', '\\btrust\\b')
-           | reject('search', '\\b127\\.0\\.0\\.1\\b')
-           | reject('search', '\\b::1\\b')
-           | reject('search', '\\blocal\\b\\s+\\S+\\s+\\S+\\s+trust\\b')
-           | list }}
+    - name: Detect non-loopback trust entries in pg_hba.conf
+      when: _cis_hba_slurp.content is defined
+      ansible.builtin.set_fact:
+        _cis_hba_bad_trust: >-
+          {{ (_cis_hba_slurp.content | b64decode).splitlines()
+             | reject('match', '^\\s*#')
+             | reject('match', '^\\s*$')
+             | select('search', '\\btrust\\b')
+             | reject('search', '\\b127\\.0\\.0\\.1\\b')
+             | reject('search', '\\b::1\\b')
+             | reject('search', '\\blocal\\b\\s+\\S+\\s+\\S+\\s+trust\\b')
+             | list }}
 
-  - name: Record pg_hba trust check
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'pg-hba-no-trust-non-loopback',
-        'expected': 'no `trust` auth_method except for 127.0.0.1 / ::1',
-        'actual': ((_cis_hba_bad_trust | default([])) | length | string) + ' non-loopback trust lines',
-        'status': ('skip' if _cis_hba_slurp.content is not defined
-                  else ('pass' if ((_cis_hba_bad_trust | default([])) | length) == 0 else 'fail')),
-        'remediation': 'Replace `trust` with `scram-sha-256` (or hostssl + cert) in pg_hba.conf and reload.'
-      }] }}"
+    - name: Record pg_hba trust check
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{'check_id': 'pg-hba-no-trust-non-loopback', 'expected': 'no `trust` auth_method except for 127.0.0.1 / ::1', 'actual':
+          ((_cis_hba_bad_trust | default([])) | length | string) + ' non-loopback trust lines', 'status': ('skip' if _cis_hba_slurp.content is not defined else ('pass'
+          if ((_cis_hba_bad_trust | default([])) | length) == 0 else 'fail')), 'remediation': 'Replace `trust` with `scram-sha-256` (or hostssl + cert) in pg_hba.conf
+          and reload.'}] }}"
 
-  # ----- Filesystem perms --------------------------------------------------
+    # ----- Filesystem perms --------------------------------------------------
 
-  - name: Stat PGDATA
-    ansible.builtin.stat:
-      path: "{{ _cis_pg_vars.postgresql_data_dir }}"
-    register: _cis_st_pgdata
+    - name: Stat PGDATA
+      ansible.builtin.stat:
+        path: "{{ _cis_pg_vars.postgresql_data_dir }}"
+      register: _cis_st_pgdata
 
-  - name: Record PGDATA mode 0700 owner postgres
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'fs-pgdata-perms',
-        'expected': 'mode=0700 owner=postgres',
-        'actual': ('exists=' ~ (_cis_st_pgdata.stat.exists | string)
-                   ~ ' mode=' ~ (_cis_st_pgdata.stat.mode | default('?'))
-                   ~ ' owner=' ~ (_cis_st_pgdata.stat.pw_name | default('?'))),
-        'status': ('skip' if not _cis_st_pgdata.stat.exists
-                  else ('pass' if (
-                    _cis_st_pgdata.stat.mode == '0700'
-                    and _cis_st_pgdata.stat.pw_name == 'postgres'
-                  ) else 'fail')),
-        'remediation': 'chown -R postgres:postgres ' ~ _cis_pg_vars.postgresql_data_dir ~ ' && chmod 0700 ' ~ _cis_pg_vars.postgresql_data_dir
-      }] }}"
+    - name: Record PGDATA mode 0700 owner postgres
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{ 'check_id': 'fs-pgdata-perms', 'expected': 'mode=0700 owner=postgres', 'actual': ('exists=' ~ (_cis_st_pgdata.stat.exists
+          | string) ~ ' mode=' ~ (_cis_st_pgdata.stat.mode | default('?')) ~ ' owner=' ~ (_cis_st_pgdata.stat.pw_name | default('?'))), 'status': ('skip' if not _cis_st_pgdata.stat.exists
+          else ('pass' if ( _cis_st_pgdata.stat.mode == '0700' and _cis_st_pgdata.stat.pw_name == 'postgres' ) else 'fail')), 'remediation': 'chown -R postgres:postgres
+          ' ~ _cis_pg_vars.postgresql_data_dir ~ ' && chmod 0700 ' ~ _cis_pg_vars.postgresql_data_dir }] }}"
 
-  # The Unix socket directory differs by family. Probe the common
-  # locations rather than hard-coding -- the Debian PGDG package uses
-  # /var/run/postgresql, RHEL PGDG uses /var/run/postgresql/<ver>, AL2023
-  # uses /var/run/postgresql. We accept any of them.
-  - name: Stat common socket directories
-    ansible.builtin.stat:
-      path: "{{ item }}"
-    loop:
-    - /var/run/postgresql
-    - "/var/run/postgresql/{{ postgresql_version | default('') }}"
-    register: _cis_st_sockets
+    # The Unix socket directory differs by family. Probe the common
+    # locations rather than hard-coding -- the Debian PGDG package uses
+    # /var/run/postgresql, RHEL PGDG uses /var/run/postgresql/<ver>, AL2023
+    # uses /var/run/postgresql. We accept any of them.
+    - name: Stat common socket directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /var/run/postgresql
+        - /var/run/postgresql/{{ postgresql_version | default('') }}
+      register: _cis_st_sockets
 
-  - name: Pick the first socket dir that exists
-    ansible.builtin.set_fact:
-      _cis_socket_st: >-
-        {{ (_cis_st_sockets.results
-            | selectattr('stat.exists', 'equalto', true)
-            | list | first | default({})).stat | default({}) }}
+    - name: Pick the first socket dir that exists
+      ansible.builtin.set_fact:
+        _cis_socket_st: >-
+          {{ (_cis_st_sockets.results
+              | selectattr('stat.exists', 'equalto', true)
+              | list | first | default({})).stat | default({}) }}
 
-  - name: Record socket directory perms 0700 postgres:postgres
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'fs-socket-dir-perms',
-        'expected': 'mode=0700 owner=postgres group=postgres',
-        'actual': (('path=' ~ (_cis_socket_st.path | default('<absent>')))
-                   ~ ' mode=' ~ (_cis_socket_st.mode | default('?'))
-                   ~ ' owner=' ~ (_cis_socket_st.pw_name | default('?'))
-                   ~ ' group=' ~ (_cis_socket_st.gr_name | default('?'))),
-        'status': ('skip' if (_cis_socket_st | length == 0)
-                  else ('pass' if (
-                    _cis_socket_st.mode | default('') == '0700'
-                    and _cis_socket_st.pw_name | default('') == 'postgres'
-                    and _cis_socket_st.gr_name | default('') == 'postgres'
-                  ) else 'fail')),
-        'remediation': ('chmod 0700 ' ~ (_cis_socket_st.path | default('/var/run/postgresql'))
-                        ~ ' && chown postgres:postgres '
-                        ~ (_cis_socket_st.path | default('/var/run/postgresql')))
-      }] }}"
+    - name: Record socket directory perms 0700 postgres:postgres
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{ 'check_id': 'fs-socket-dir-perms', 'expected': 'mode=0700 owner=postgres group=postgres', 'actual': (('path=' ~ (_cis_socket_st.path
+          | default('<absent>'))) ~ ' mode=' ~ (_cis_socket_st.mode | default('?')) ~ ' owner=' ~ (_cis_socket_st.pw_name | default('?')) ~ ' group=' ~ (_cis_socket_st.gr_name
+          | default('?'))), 'status': ('skip' if (_cis_socket_st | length == 0) else ('pass' if ( _cis_socket_st.mode | default('') == '0700' and _cis_socket_st.pw_name
+          | default('') == 'postgres' and _cis_socket_st.gr_name | default('') == 'postgres' ) else 'fail')), 'remediation': ('chmod 0700 ' ~ (_cis_socket_st.path
+          | default('/var/run/postgresql')) ~ ' && chown postgres:postgres ' ~ (_cis_socket_st.path | default('/var/run/postgresql'))) }] }}"
 
-  # pg_ident.conf lives next to pg_hba.conf. We do not require it to
-  # exist (most installs do not use ident maps), but if it does, it must
-  # NOT be world-readable.
-  - name: Stat pg_ident.conf
-    ansible.builtin.stat:
-      path: "{{ _cis_pg_vars.postgresql_config_dir }}/pg_ident.conf"
-    register: _cis_st_ident
+    # pg_ident.conf lives next to pg_hba.conf. We do not require it to
+    # exist (most installs do not use ident maps), but if it does, it must
+    # NOT be world-readable.
+    - name: Stat pg_ident.conf
+      ansible.builtin.stat:
+        path: "{{ _cis_pg_vars.postgresql_config_dir }}/pg_ident.conf"
+      register: _cis_st_ident
 
-  - name: Record pg_ident.conf perms (must not be world-readable when present)
-    ansible.builtin.set_fact:
-      _cis_findings: "{{ _cis_findings + [{
-        'check_id': 'fs-pg-ident-not-world-readable',
-        'expected': 'mode last octet not >= 4 when present',
-        'actual': ('exists=' ~ (_cis_st_ident.stat.exists | string)
-                   ~ ' mode=' ~ (_cis_st_ident.stat.mode | default('?'))),
-        'status': ('skip' if not _cis_st_ident.stat.exists
-                  else ('pass' if (
-                    (_cis_st_ident.stat.mode | default('0000'))[-1] | int < 4
-                  ) else 'fail')),
-        'remediation': ('chmod 0640 ' ~ _cis_pg_vars.postgresql_config_dir ~ '/pg_ident.conf'
-                        ~ ' && chown postgres:postgres '
-                        ~ _cis_pg_vars.postgresql_config_dir ~ '/pg_ident.conf')
-      }] }}"
+    - name: Record pg_ident.conf perms (must not be world-readable when present)
+      ansible.builtin.set_fact:
+        _cis_findings: "{{ _cis_findings + [{ 'check_id': 'fs-pg-ident-not-world-readable', 'expected': 'mode last octet not >= 4 when present', 'actual': ('exists='
+          ~ (_cis_st_ident.stat.exists | string) ~ ' mode=' ~ (_cis_st_ident.stat.mode | default('?'))), 'status': ('skip' if not _cis_st_ident.stat.exists else ('pass'
+          if ( (_cis_st_ident.stat.mode | default('0000'))[-1] | int < 4 ) else 'fail')), 'remediation': ('chmod 0640 ' ~ _cis_pg_vars.postgresql_config_dir ~ '/pg_ident.conf'
+          ~ ' && chown postgres:postgres ' ~ _cis_pg_vars.postgresql_config_dir ~ '/pg_ident.conf') }] }}"
 
-  # ----- Persist + surface -------------------------------------------------
+    # ----- Persist + surface -------------------------------------------------
 
-  - name: Persist host-level CIS report
-    ansible.builtin.copy:
-      content: "{{ {'host': inventory_hostname, 'generated_at': ansible_date_time.iso8601, 'findings': _cis_findings} | to_nice_json }}\n"
-      dest: "{{ cis_report_path }}"
-      owner: root
-      group: root
-      mode: "0644"
+    - name: Persist host-level CIS report
+      ansible.builtin.copy:
+        content: "{{ {'host': inventory_hostname, 'generated_at': ansible_date_time.iso8601, 'findings': _cis_findings} | to_nice_json }}\n"
+        dest: "{{ cis_report_path }}"
+        owner: root
+        group: root
+        mode: "0644"
 
-  - name: Summarise verdict
-    ansible.builtin.set_fact:
-      _cis_pass: "{{ (_cis_findings | selectattr('status', 'equalto', 'pass') | list) | length }}"
-      _cis_fail: "{{ (_cis_findings | selectattr('status', 'equalto', 'fail') | list) | length }}"
-      _cis_skip: "{{ (_cis_findings | selectattr('status', 'equalto', 'skip') | list) | length }}"
+    - name: Summarise verdict
+      ansible.builtin.set_fact:
+        _cis_pass: "{{ (_cis_findings | selectattr('status', 'equalto', 'pass') | list) | length }}"
+        _cis_fail: "{{ (_cis_findings | selectattr('status', 'equalto', 'fail') | list) | length }}"
+        _cis_skip: "{{ (_cis_findings | selectattr('status', 'equalto', 'skip') | list) | length }}"
 
-  - name: Surface per-check verdict
-    ansible.builtin.debug:
-      msg: "{{ '%-6s' | format(item.status | upper) }} {{ item.check_id }}  expected={{ item.expected }}  actual={{ item.actual }}"
-    loop: "{{ _cis_findings }}"
-    loop_control:
-      label: "{{ item.check_id }}"
+    - name: Surface per-check verdict
+      ansible.builtin.debug:
+        msg: "{{ '%-6s' | format(item.status | upper) }} {{ item.check_id }}  expected={{ item.expected }}  actual={{ item.actual }}"
+      loop: "{{ _cis_findings }}"
+      loop_control:
+        label: "{{ item.check_id }}"
 
-  - name: Surface summary
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "CIS audit -- {{ inventory_hostname }}"
-      - "  PASS : {{ _cis_pass }}"
-      - "  FAIL : {{ _cis_fail }}"
-      - "  SKIP : {{ _cis_skip }}"
-      - "  Report : {{ cis_report_path }}"
-      - "########################################################################"
+    - name: Surface summary
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - CIS audit -- {{ inventory_hostname }}
+          - "  PASS : {{ _cis_pass }}"
+          - "  FAIL : {{ _cis_fail }}"
+          - "  SKIP : {{ _cis_skip }}"
+          - "  Report : {{ cis_report_path }}"
+          - "########################################################################"

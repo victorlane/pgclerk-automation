@@ -14,7 +14,7 @@
     group: "{{ postgres_exporter_group }}"
     system: true
     shell: /sbin/nologin
-    home: "/var/lib/{{ postgres_exporter_user }}"
+    home: /var/lib/{{ postgres_exporter_user }}
     create_home: false
     state: present
 
@@ -46,8 +46,8 @@
     group: root
     mode: "0644"
   notify:
-  - postgres_exporter reload systemd
-  - postgres_exporter restart
+    - postgres_exporter reload systemd
+    - postgres_exporter restart
 
 - name: Flush handlers so the unit is in place before enable/start
   ansible.builtin.meta: flush_handlers

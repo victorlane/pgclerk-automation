@@ -19,33 +19,33 @@ postgresql_shared_buffers: ""
 postgresql_effective_cache_size: ""
 postgresql_maintenance_work_mem: ""
 postgresql_work_mem: ""
-postgresql_log_dirname: "pg_log"
-postgresql_icu_locale: "en-US"
+postgresql_log_dirname: pg_log
+postgresql_icu_locale: en-US
 postgresql_locale_provider: libc
-postgresql_locale: "C.UTF-8"
+postgresql_locale: C.UTF-8
 postgresql_shared_preload_libraries:
-- pg_stat_statements
+  - pg_stat_statements
 postgresql_hba_entries:
-- { type: local, database: all, user: postgres, auth_method: peer }
-- { type: local, database: all, user: all, auth_method: peer }
-- { type: host, database: all, user: all, address: "127.0.0.1/32", auth_method: scram-sha-256 }
-- { type: host, database: all, user: all, address: "::1/128", auth_method: scram-sha-256 }
+  - { type: local, database: all, user: postgres, auth_method: peer }
+  - { type: local, database: all, user: all, auth_method: peer }
+  - { type: host, database: all, user: all, address: 127.0.0.1/32, auth_method: scram-sha-256 }
+  - { type: host, database: all, user: all, address: "::1/128", auth_method: scram-sha-256 }
 
 # Patroni-specific defaults
 # --------------------------------------------------------------------------
 
 # Patroni release. Pinned because Patroni's YAML schema and patronictl output
 # both shift between minor versions; consumers can override per-env.
-patroni_version: "3.3.2"
+patroni_version: 3.3.2
 
 # Cluster scope -- shared by all members of one Patroni cluster. Becomes the
 # etcd key prefix (/service/<scope>/...).
-patroni_scope: "pgclerk"
+patroni_scope: pgclerk
 
 # Where DCS (etcd) lives. Default assumes etcd runs embedded on the same
 # postgres_servers hosts; for an external etcd quorum, point this at the
 # external inventory group.
-patroni_dcs_inventory_group: "postgres_servers"
+patroni_dcs_inventory_group: postgres_servers
 
 # Synchronous replication. With synchronous_mode=true Patroni promotes only
 # replicas that are caught up. synchronous_mode_strict=true additionally
@@ -83,17 +83,17 @@ patroni_venv: /opt/patroni/venv
 # Bootstrap users. Override these via a vault file or -e @secrets.yml in
 # anything resembling production. Defaults are intentionally obvious so
 # unmodified deploys fail a security review.
-patroni_admin_password: "changeme-admin"
-patroni_replicator_password: "changeme-replicator"
-patroni_superuser_password: "changeme-superuser"
-patroni_rewind_password: "changeme-rewind"
+patroni_admin_password: changeme-admin
+patroni_replicator_password: changeme-replicator
+patroni_superuser_password: changeme-superuser
+patroni_rewind_password: changeme-rewind
 
 # REST API port -- patronictl, HAProxy health checks, monitoring all hit this.
 patroni_restapi_port: 8008
 
 # CIDR allowed to perform streaming replication. Consumer must narrow this
 # per-environment; 10/8 is a placeholder that matches our dev NAT.
-patroni_replication_cidr: "10.0.0.0/8"
+patroni_replication_cidr: 10.0.0.0/8
 
 # DCS timing. ttl > loop_wait + retry_timeout is enforced by Patroni.
 patroni_ttl: 30

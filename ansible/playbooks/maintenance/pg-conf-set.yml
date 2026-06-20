@@ -14,11 +14,12 @@
   hosts: localhost
   gather_facts: false
   tasks:
-  - ansible.builtin.assert:
-      that: ansible_limit is defined
-      fail_msg: >-
-        Refusing to push pg conf changes across the entire inventory. Re-run
-        with --limit <host-or-group>.
+    - name: Assert --limit was provided
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          Refusing to push pg conf changes across the entire inventory. Re-run
+          with --limit <host-or-group>.
 
 - name: Apply postgresql settings
   hosts: postgres_servers
@@ -27,40 +28,43 @@
   vars:
     postgresql_settings: {}
   tasks:
-  - ansible.builtin.assert:
-      that:
-      - postgresql_settings is mapping
-      - postgresql_settings | length > 0
-      fail_msg: "postgresql_settings is required and must be a non-empty dict."
+    - name: Assert postgresql_settings is a non-empty dict
+      ansible.builtin.assert:
+        that:
+          - postgresql_settings is mapping
+          - postgresql_settings | length > 0
+        fail_msg: postgresql_settings is required and must be a non-empty dict.
 
-  - name: ALTER SYSTEM SET each parameter
-    community.postgresql.postgresql_set:
-      name: "{{ item.key }}"
-      value: "{{ item.value }}"
-    loop: "{{ postgresql_settings | dict2items }}"
-    register: _setres
-    become_user: postgres
+    - name: ALTER SYSTEM SET each parameter
+      community.postgresql.postgresql_set:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+      loop: "{{ postgresql_settings | dict2items }}"
+      register: _setres
+      become: true
+      become_user: postgres
 
-  - name: Inspect restart-required flags
-    community.postgresql.postgresql_query:
-      query: >-
-        SELECT name FROM pg_settings
-        WHERE name = ANY (%(names)s) AND context = 'postmaster'
-      named_args:
-        names: "{{ postgresql_settings.keys() | list }}"
-    register: _restart_q
-    become_user: postgres
+    - name: Inspect restart-required flags
+      community.postgresql.postgresql_query:
+        query: >-
+          SELECT name FROM pg_settings
+          WHERE name = ANY (%(names)s) AND context = 'postmaster'
+        named_args:
+          names: "{{ postgresql_settings.keys() | list }}"
+      register: _restart_q
+      become: true
+      become_user: postgres
 
-  - name: Reload PostgreSQL (covers non-postmaster keys)
-    ansible.builtin.command: pg_ctlcluster {{ postgresql_version | default('17') }} main reload
-    when: _restart_q.query_result | length == 0
-    register: _reload
-    changed_when: _reload.rc == 0
+    - name: Reload PostgreSQL (covers non-postmaster keys)
+      ansible.builtin.command: pg_ctlcluster {{ postgresql_version | default('17') }} main reload
+      when: _restart_q.query_result | length == 0
+      register: _reload
+      changed_when: _reload.rc == 0
 
-  - name: Notify DBA when a restart is required
-    when: _restart_q.query_result | length > 0
-    ansible.builtin.debug:
-      msg:
-      - "Restart-required parameters changed: {{ _restart_q.query_result | map(attribute='name') | list | join(', ') }}"
-      - "This playbook deliberately does NOT restart. Schedule maint-switchover"
-      - "(HA) or maint-os-update (standalone) inside a maintenance window."
+    - name: Notify DBA when a restart is required
+      when: _restart_q.query_result | length > 0
+      ansible.builtin.debug:
+        msg:
+          - "Restart-required parameters changed: {{ _restart_q.query_result | map(attribute='name') | list | join(', ') }}"
+          - This playbook deliberately does NOT restart. Schedule maint-switchover
+          - (HA) or maint-os-update (standalone) inside a maintenance window.

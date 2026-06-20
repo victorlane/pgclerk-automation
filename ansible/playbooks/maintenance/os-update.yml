@@ -17,18 +17,18 @@
     updates_apply: security
     updates_reboot: false
   tasks:
-  - name: Refuse to run without an explicit --limit
-    ansible.builtin.assert:
-      that: ansible_limit is defined
-      fail_msg: >-
-        Refusing to run os-update against the entire inventory. Re-run with
-        --limit postgres_replicas (or a more specific selector).
+    - name: Refuse to run without an explicit --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          Refusing to run os-update against the entire inventory. Re-run with
+          --limit postgres_replicas (or a more specific selector).
 
-  - name: Resolve OS family slug
-    ansible.builtin.set_fact:
-      _os_family_slug: "{{ ansible_facts['os_family'] | lower | replace('redhat', 'rhel') }}"
+    - name: Resolve OS family slug
+      ansible.builtin.set_fact:
+        _os_family_slug: "{{ ansible_facts['os_family'] | lower | replace('redhat', 'rhel') }}"
 
-  - name: Invoke the family-specific updates role in run-now mode
-    ansible.builtin.include_role:
-      name: "os_{{ _os_family_slug }}_updates"
-      tasks_from: run-now
+    - name: Invoke the family-specific updates role in run-now mode
+      ansible.builtin.include_role:
+        name: os_{{ _os_family_slug }}_updates
+        tasks_from: run-now

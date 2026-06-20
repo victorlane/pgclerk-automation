@@ -62,36 +62,36 @@
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Assert publication vars are defined
-    ansible.builtin.assert:
-      that:
-      - lr_publication_name is defined
-      - lr_publication_name | length > 0
-      - lr_database is defined
-      - lr_database | length > 0
-      fail_msg: "lr_publication_name and lr_database are required."
+    - name: Assert publication vars are defined
+      ansible.builtin.assert:
+        that:
+          - lr_publication_name is defined
+          - lr_publication_name | length > 0
+          - lr_database is defined
+          - lr_database | length > 0
+        fail_msg: lr_publication_name and lr_database are required.
 
-  - name: Assert subscription vars when not publication-only
-    when: not (lr_publication_only | default(false) | bool)
-    ansible.builtin.assert:
-      that:
-      - lr_subscription_name is defined
-      - lr_subscription_name | length > 0
-      - lr_subscription_conninfo is defined
-      - lr_subscription_conninfo | length > 0
-      - lr_subscription_slot_name is defined
-      - lr_subscription_slot_name | length > 0
-      fail_msg: >-
-        lr_subscription_name, lr_subscription_conninfo, and
-        lr_subscription_slot_name are required unless
-        lr_publication_only=true.
+    - name: Assert subscription vars when not publication-only
+      when: not (lr_publication_only | default(false) | bool)
+      ansible.builtin.assert:
+        that:
+          - lr_subscription_name is defined
+          - lr_subscription_name | length > 0
+          - lr_subscription_conninfo is defined
+          - lr_subscription_conninfo | length > 0
+          - lr_subscription_slot_name is defined
+          - lr_subscription_slot_name | length > 0
+        fail_msg: >-
+          lr_subscription_name, lr_subscription_conninfo, and
+          lr_subscription_slot_name are required unless
+          lr_publication_only=true.
 
-  - name: Refuse to run without an explicit --limit
-    ansible.builtin.assert:
-      that: ansible_limit is defined
-      fail_msg: >-
-        Refusing to set up logical replication across the whole inventory.
-        Re-run with --limit <publisher_or_subscriber_host>.
+    - name: Refuse to run without an explicit --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          Refusing to set up logical replication across the whole inventory.
+          Re-run with --limit <publisher_or_subscriber_host>.
 
 - name: Configure logical replication on the target host
   hosts: postgres_servers
@@ -100,194 +100,194 @@
   gather_facts: true
   vars:
     lr_tables: []
-    lr_publish_for: ['insert', 'update', 'delete', 'truncate']
+    lr_publish_for: [insert, update, delete, truncate]
     lr_publication_only: false
     lr_subscription_create_slot: true
     lr_subscription_copy_data: true
   tasks:
   # --- Pre-flight: server-side prerequisites ------------------------------
 
-  - name: Read wal_level
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SHOW wal_level"
-    register: _lr_wal_level
+    - name: Read wal_level
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SHOW wal_level
+      register: _lr_wal_level
 
-  - name: Refuse unless wal_level=logical
-    ansible.builtin.assert:
-      that: (_lr_wal_level.query_result | first).wal_level == 'logical'
-      fail_msg: >-
-        wal_level is '{{ (_lr_wal_level.query_result | first).wal_level }}',
-        must be 'logical' for logical replication.
-        Standalone fix:
-          ALTER SYSTEM SET wal_level = 'logical';  -- restart required.
-        Patroni fix: edit patroni.yml on every node:
-          bootstrap:
-            dcs:
-              postgresql:
-                parameters:
-                  wal_level: logical
-                  max_replication_slots: <>= 10
-                  max_wal_senders: <>= 10
-        Then re-apply the patroni role and roll-restart the cluster.
+    - name: Refuse unless wal_level=logical
+      ansible.builtin.assert:
+        that: (_lr_wal_level.query_result | first).wal_level == 'logical'
+        fail_msg: >-
+          wal_level is '{{ (_lr_wal_level.query_result | first).wal_level }}',
+          must be 'logical' for logical replication.
+          Standalone fix:
+            ALTER SYSTEM SET wal_level = 'logical';  -- restart required.
+          Patroni fix: edit patroni.yml on every node:
+            bootstrap:
+              dcs:
+                postgresql:
+                  parameters:
+                    wal_level: logical
+                    max_replication_slots: <>= 10
+                    max_wal_senders: <>= 10
+          Then re-apply the patroni role and roll-restart the cluster.
 
-  - name: Read replication-slot / wal-sender capacity
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: >-
-        SELECT
-          (SELECT setting::int FROM pg_settings WHERE name = 'max_replication_slots') AS max_slots,
-          (SELECT setting::int FROM pg_settings WHERE name = 'max_wal_senders')        AS max_senders,
-          (SELECT count(*) FROM pg_replication_slots)                                   AS used_slots,
-          (SELECT count(*) FROM pg_stat_replication)                                    AS used_senders
-    register: _lr_capacity
+    - name: Read replication-slot / wal-sender capacity
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: >-
+          SELECT
+            (SELECT setting::int FROM pg_settings WHERE name = 'max_replication_slots') AS max_slots,
+            (SELECT setting::int FROM pg_settings WHERE name = 'max_wal_senders')        AS max_senders,
+            (SELECT count(*) FROM pg_replication_slots)                                   AS used_slots,
+            (SELECT count(*) FROM pg_stat_replication)                                    AS used_senders
+      register: _lr_capacity
 
-  - name: Refuse when slot/sender headroom is exhausted
-    ansible.builtin.assert:
-      that:
-      - (_lr_capacity.query_result | first).max_slots > (_lr_capacity.query_result | first).used_slots
-      - (_lr_capacity.query_result | first).max_senders > (_lr_capacity.query_result | first).used_senders
-      fail_msg: >-
-        Not enough headroom on this server.
-        max_replication_slots={{ (_lr_capacity.query_result | first).max_slots }},
-        used={{ (_lr_capacity.query_result | first).used_slots }};
-        max_wal_senders={{ (_lr_capacity.query_result | first).max_senders }},
-        used={{ (_lr_capacity.query_result | first).used_senders }}.
-        Raise the limits (standalone: ALTER SYSTEM + restart; Patroni: edit
-        bootstrap.dcs.postgresql.parameters in patroni.yml and roll-restart).
+    - name: Refuse when slot/sender headroom is exhausted
+      ansible.builtin.assert:
+        that:
+          - (_lr_capacity.query_result | first).max_slots > (_lr_capacity.query_result | first).used_slots
+          - (_lr_capacity.query_result | first).max_senders > (_lr_capacity.query_result | first).used_senders
+        fail_msg: >-
+          Not enough headroom on this server.
+          max_replication_slots={{ (_lr_capacity.query_result | first).max_slots }},
+          used={{ (_lr_capacity.query_result | first).used_slots }};
+          max_wal_senders={{ (_lr_capacity.query_result | first).max_senders }},
+          used={{ (_lr_capacity.query_result | first).used_senders }}.
+          Raise the limits (standalone: ALTER SYSTEM + restart; Patroni: edit
+          bootstrap.dcs.postgresql.parameters in patroni.yml and roll-restart).
 
-  # --- Publication side ---------------------------------------------------
-  # We treat the target host as the publisher when lr_publication_only=true
-  # OR when no subscription vars are provided. Otherwise it is the subscriber
-  # and we DO NOT create a publication here (it must already exist upstream).
+    # --- Publication side ---------------------------------------------------
+    # We treat the target host as the publisher when lr_publication_only=true
+    # OR when no subscription vars are provided. Otherwise it is the subscriber
+    # and we DO NOT create a publication here (it must already exist upstream).
 
-  - name: Build publication FOR clause
-    ansible.builtin.set_fact:
-      _lr_for_clause: >-
-        {{ 'FOR ALL TABLES'
-           if (lr_tables | default([]) | length) == 0
-           else 'FOR TABLE ' ~ (lr_tables | join(', ')) }}
+    - name: Build publication FOR clause
+      ansible.builtin.set_fact:
+        _lr_for_clause: >-
+          {{ 'FOR ALL TABLES'
+             if (lr_tables | default([]) | length) == 0
+             else 'FOR TABLE ' ~ (lr_tables | join(', ')) }}
 
-  - name: Check whether the publication already exists
-    when: lr_publication_only | bool
-    community.postgresql.postgresql_query:
-      db: "{{ lr_database }}"
-      query: "SELECT pubname FROM pg_publication WHERE pubname = %(p)s"
-      named_args:
-        p: "{{ lr_publication_name }}"
-    register: _lr_pub_check
+    - name: Check whether the publication already exists
+      when: lr_publication_only | bool
+      community.postgresql.postgresql_query:
+        db: "{{ lr_database }}"
+        query: SELECT pubname FROM pg_publication WHERE pubname = %(p)s
+        named_args:
+          p: "{{ lr_publication_name }}"
+      register: _lr_pub_check
 
-  - name: Create publication (idempotent via existence check)
-    when:
-    - lr_publication_only | bool
-    - (_lr_pub_check.query_result | default([])) | length == 0
-    community.postgresql.postgresql_query:
-      db: "{{ lr_database }}"
-      query: >-
-        CREATE PUBLICATION {{ lr_publication_name }}
-        {{ _lr_for_clause }}
-        WITH (publish = '{{ lr_publish_for | join(',') }}')
-    register: _lr_pub_create
-    changed_when: true
+    - name: Create publication (idempotent via existence check)
+      when:
+        - lr_publication_only | bool
+        - (_lr_pub_check.query_result | default([])) | length == 0
+      community.postgresql.postgresql_query:
+        db: "{{ lr_database }}"
+        query: >-
+          CREATE PUBLICATION {{ lr_publication_name }}
+          {{ _lr_for_clause }}
+          WITH (publish = '{{ lr_publish_for | join(',') }}')
+      register: _lr_pub_create
+      changed_when: true
 
-  - name: Surface publication state
-    when: lr_publication_only | bool
-    community.postgresql.postgresql_query:
-      db: "{{ lr_database }}"
-      query: >-
-        SELECT pubname, puballtables, pubinsert, pubupdate, pubdelete, pubtruncate
-        FROM pg_publication
-        WHERE pubname = %(p)s
-      named_args:
-        p: "{{ lr_publication_name }}"
-    register: _lr_pub_state
+    - name: Surface publication state
+      when: lr_publication_only | bool
+      community.postgresql.postgresql_query:
+        db: "{{ lr_database }}"
+        query: >-
+          SELECT pubname, puballtables, pubinsert, pubupdate, pubdelete, pubtruncate
+          FROM pg_publication
+          WHERE pubname = %(p)s
+        named_args:
+          p: "{{ lr_publication_name }}"
+      register: _lr_pub_state
 
-  - name: Show publication state
-    when: lr_publication_only | bool
-    ansible.builtin.debug:
-      var: _lr_pub_state.query_result
+    - name: Show publication state
+      when: lr_publication_only | bool
+      ansible.builtin.debug:
+        var: _lr_pub_state.query_result
 
-  - name: Stop here when lr_publication_only=true
-    when: lr_publication_only | bool
-    ansible.builtin.meta: end_play
+    - name: Stop here when lr_publication_only=true
+      when: lr_publication_only | bool
+      ansible.builtin.meta: end_play
 
-  # --- Subscription side --------------------------------------------------
+    # --- Subscription side --------------------------------------------------
 
-  - name: Check whether the subscription already exists
-    community.postgresql.postgresql_query:
-      db: "{{ lr_database }}"
-      query: "SELECT subname FROM pg_subscription WHERE subname = %(s)s"
-      named_args:
-        s: "{{ lr_subscription_name }}"
-    register: _lr_sub_check
+    - name: Check whether the subscription already exists
+      community.postgresql.postgresql_query:
+        db: "{{ lr_database }}"
+        query: SELECT subname FROM pg_subscription WHERE subname = %(s)s
+        named_args:
+          s: "{{ lr_subscription_name }}"
+      register: _lr_sub_check
 
-  - name: Build CREATE SUBSCRIPTION WITH options
-    ansible.builtin.set_fact:
-      _lr_sub_with: >-
-        {{
-          ['slot_name = ' ~ "'" ~ lr_subscription_slot_name ~ "'",
-           'create_slot = ' ~ ('true' if lr_subscription_create_slot | bool else 'false'),
-           'copy_data = '   ~ ('true' if lr_subscription_copy_data | bool else 'false'),
-           'enabled = true']
-          | join(', ')
-        }}
+    - name: Build CREATE SUBSCRIPTION WITH options
+      ansible.builtin.set_fact:
+        _lr_sub_with: >-
+          {{
+            ['slot_name = ' ~ "'" ~ lr_subscription_slot_name ~ "'",
+             'create_slot = ' ~ ('true' if lr_subscription_create_slot | bool else 'false'),
+             'copy_data = '   ~ ('true' if lr_subscription_copy_data | bool else 'false'),
+             'enabled = true']
+            | join(', ')
+          }}
 
-  - name: Create subscription
-    when: (_lr_sub_check.query_result | default([])) | length == 0
-    community.postgresql.postgresql_query:
-      db: "{{ lr_database }}"
-      query: >-
-        CREATE SUBSCRIPTION {{ lr_subscription_name }}
-        CONNECTION '{{ lr_subscription_conninfo }}'
-        PUBLICATION {{ lr_publication_name }}
-        WITH ({{ _lr_sub_with }})
-    register: _lr_sub_create
-    changed_when: true
-    no_log: true
+    - name: Create subscription
+      when: (_lr_sub_check.query_result | default([])) | length == 0
+      community.postgresql.postgresql_query:
+        db: "{{ lr_database }}"
+        query: >-
+          CREATE SUBSCRIPTION {{ lr_subscription_name }}
+          CONNECTION '{{ lr_subscription_conninfo }}'
+          PUBLICATION {{ lr_publication_name }}
+          WITH ({{ _lr_sub_with }})
+      register: _lr_sub_create
+      changed_when: true
+      no_log: true
 
-  - name: Surface subscription was already present (no-op path)
-    when: (_lr_sub_check.query_result | default([])) | length > 0
-    ansible.builtin.debug:
-      msg: >-
-        Subscription '{{ lr_subscription_name }}' already exists; not touching
-        it. Drop it manually if you want a clean rebuild.
+    - name: Surface subscription was already present (no-op path)
+      when: (_lr_sub_check.query_result | default([])) | length > 0
+      ansible.builtin.debug:
+        msg: >-
+          Subscription '{{ lr_subscription_name }}' already exists; not touching
+          it. Drop it manually if you want a clean rebuild.
 
-  - name: Notice when copy_data was skipped
-    when: not (lr_subscription_copy_data | bool)
-    ansible.builtin.debug:
-      msg:
-      - "copy_data=false; the subscription will NOT seed the target tables."
-      - "You must initial-load the data yourself, e.g.:"
-      - "  pg_dump -h <pub_host> -U replicator -d {{ lr_database }} \\"
-      - "    --data-only --schema=public --no-owner --no-privileges \\"
-      - "    | psql -d {{ lr_database }}"
-      - "Then ALTER SUBSCRIPTION {{ lr_subscription_name }} REFRESH"
-      - "  PUBLICATION WITH (copy_data = false);"
+    - name: Notice when copy_data was skipped
+      when: not (lr_subscription_copy_data | bool)
+      ansible.builtin.debug:
+        msg:
+          - copy_data=false; the subscription will NOT seed the target tables.
+          - "You must initial-load the data yourself, e.g.:"
+          - "  pg_dump -h <pub_host> -U replicator -d {{ lr_database }} \\"
+          - "    --data-only --schema=public --no-owner --no-privileges \\"
+          - "    | psql -d {{ lr_database }}"
+          - Then ALTER SUBSCRIPTION {{ lr_subscription_name }} REFRESH
+          - "  PUBLICATION WITH (copy_data = false);"
 
-  - name: Read initial pg_stat_subscription
-    community.postgresql.postgresql_query:
-      db: "{{ lr_database }}"
-      query: >-
-        SELECT subname, pid, received_lsn, latest_end_lsn,
-               latest_end_time, last_msg_send_time, last_msg_receipt_time
-        FROM pg_stat_subscription
-        WHERE subname = %(s)s
-      named_args:
-        s: "{{ lr_subscription_name }}"
-    register: _lr_sub_stat
-    failed_when: false
+    - name: Read initial pg_stat_subscription
+      community.postgresql.postgresql_query:
+        db: "{{ lr_database }}"
+        query: >-
+          SELECT subname, pid, received_lsn, latest_end_lsn,
+                 latest_end_time, last_msg_send_time, last_msg_receipt_time
+          FROM pg_stat_subscription
+          WHERE subname = %(s)s
+        named_args:
+          s: "{{ lr_subscription_name }}"
+      register: _lr_sub_stat
+      failed_when: false
 
-  - name: Surface logical replication verdict
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "Logical replication wired"
-      - "  Subscriber host    : {{ inventory_hostname }}"
-      - "  Database           : {{ lr_database }}"
-      - "  Publication        : {{ lr_publication_name }}"
-      - "  Subscription       : {{ lr_subscription_name }}"
-      - "  Remote slot        : {{ lr_subscription_slot_name }}"
-      - "  Copy data on start : {{ lr_subscription_copy_data | bool }}"
-      - "  pg_stat_subscription:"
-      - "    {{ (_lr_sub_stat.query_result | default([{}])) | first }}"
-      - "########################################################################"
+    - name: Surface logical replication verdict
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - Logical replication wired
+          - "  Subscriber host    : {{ inventory_hostname }}"
+          - "  Database           : {{ lr_database }}"
+          - "  Publication        : {{ lr_publication_name }}"
+          - "  Subscription       : {{ lr_subscription_name }}"
+          - "  Remote slot        : {{ lr_subscription_slot_name }}"
+          - "  Copy data on start : {{ lr_subscription_copy_data | bool }}"
+          - "  pg_stat_subscription:"
+          - "    {{ (_lr_sub_stat.query_result | default([{}])) | first }}"
+          - "########################################################################"

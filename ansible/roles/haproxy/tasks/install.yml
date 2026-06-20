@@ -1,6 +1,6 @@
 ---
 - name: Install haproxy package
-  ansible.builtin.include_tasks: "install-{{ _pg_os_variant }}.yml"
+  ansible.builtin.include_tasks: install-{{ _pg_os_variant }}.yml
 
 - name: Ensure haproxy config directory exists
   ansible.builtin.file:

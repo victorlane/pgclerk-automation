@@ -27,26 +27,26 @@
   hosts: localhost
   gather_facts: false
   tasks:
-  - name: Refuse to run without --limit
-    ansible.builtin.assert:
-      that: ansible_limit is defined
-      fail_msg: >-
-        undrain-node operates on exactly one host.  Re-run with --limit
-        <undrain_host>.
+    - name: Refuse to run without --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          undrain-node operates on exactly one host.  Re-run with --limit
+          <undrain_host>.
 
-  - name: Assert undrain_host is defined
-    ansible.builtin.assert:
-      that:
-      - undrain_host is defined
-      - undrain_host | length > 0
-      fail_msg: "undrain_host must be provided (-e undrain_host=<inventory hostname>)."
+    - name: Assert undrain_host is defined
+      ansible.builtin.assert:
+        that:
+          - undrain_host is defined
+          - undrain_host | length > 0
+        fail_msg: undrain_host must be provided (-e undrain_host=<inventory hostname>).
 
-  - name: Assert undrain_host is in postgres_servers
-    ansible.builtin.assert:
-      that: undrain_host in (groups['postgres_servers'] | default([]))
-      fail_msg: >-
-        undrain_host '{{ undrain_host }}' is not in inventory group
-        postgres_servers.
+    - name: Assert undrain_host is in postgres_servers
+      ansible.builtin.assert:
+        that: undrain_host in (groups['postgres_servers'] | default([]))
+        fail_msg: >-
+          undrain_host '{{ undrain_host }}' is not in inventory group
+          postgres_servers.
 
 - name: Undrain {{ undrain_host | default('host') }}
   hosts: "{{ undrain_host | default('undrain_host_undefined') }}"
@@ -55,114 +55,112 @@
   vars:
     undrain_wait_s: 300
   tasks:
-  - name: Resolve OS variant + per-OS PG paths
-    ansible.builtin.set_fact:
-      _ud_os_variant: >-
-        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
-           else ansible_facts['os_family'] }}
+    - name: Resolve OS variant + per-OS PG paths
+      ansible.builtin.set_fact:
+        _ud_os_variant: >-
+          {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+             else ansible_facts['os_family'] }}
 
-  - name: Load postgresql OS-specific variables
-    ansible.builtin.include_vars:
-      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _ud_os_variant }}.yml"
-      name: _ud_pg_vars
+    - name: Load postgresql OS-specific variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _ud_os_variant }}.yml"
+        name: _ud_pg_vars
 
-  - name: Resolve managed service unit name
-    ansible.builtin.set_fact:
-      _ud_unit: >-
-        {{ 'patroni.service'
-           if (postgresql_ha_mode | default('standalone')) == 'patroni'
-           else _ud_pg_vars.postgresql_service }}
+    - name: Resolve managed service unit name
+      ansible.builtin.set_fact:
+        _ud_unit: >-
+          {{ 'patroni.service'
+             if (postgresql_ha_mode | default('standalone')) == 'patroni'
+             else _ud_pg_vars.postgresql_service }}
 
-  # --- HA: clear drain tags --------------------------------------------
+    # --- HA: clear drain tags --------------------------------------------
 
-  - name: Clear tags.nofailover in local patroni.yml (HA only)
-    ansible.builtin.replace:
-      path: /etc/patroni/patroni.yml
-      regexp: '^(\s*nofailover:\s*).*$'
-      replace: '\1false'
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    - name: Clear tags.nofailover in local patroni.yml (HA only)
+      ansible.builtin.replace:
+        path: /etc/patroni/patroni.yml
+        regexp: ^(\s*nofailover:\s*).*$
+        replace: \1false
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  - name: Clear tags.noloadbalance in local patroni.yml (HA only)
-    ansible.builtin.replace:
-      path: /etc/patroni/patroni.yml
-      regexp: '^(\s*noloadbalance:\s*).*$'
-      replace: '\1false'
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    - name: Clear tags.noloadbalance in local patroni.yml (HA only)
+      ansible.builtin.replace:
+        path: /etc/patroni/patroni.yml
+        regexp: ^(\s*noloadbalance:\s*).*$
+        replace: \1false
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  # --- Re-enable + start ------------------------------------------------
+    # --- Re-enable + start ------------------------------------------------
 
-  - name: Re-enable managed service unit
-    ansible.builtin.systemd:
-      name: "{{ _ud_unit }}"
-      enabled: true
+    - name: Re-enable managed service unit
+      ansible.builtin.systemd:
+        name: "{{ _ud_unit }}"
+        enabled: true
 
-  - name: Start managed service unit
-    ansible.builtin.systemd:
-      name: "{{ _ud_unit }}"
-      state: started
+    - name: Start managed service unit
+      ansible.builtin.systemd:
+        name: "{{ _ud_unit }}"
+        state: started
 
-  - name: Reload patroni so cleared tags take effect (HA only)
-    ansible.builtin.command:
-      cmd: >-
-        /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
-        reload --force {{ patroni_scope | default('pgclerk') }}
-        {{ inventory_hostname }}
-    changed_when: true
-    failed_when: false
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    - name: Reload patroni so cleared tags take effect (HA only)
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
+          reload --force {{ patroni_scope | default('pgclerk') }}
+          {{ inventory_hostname }}
+      changed_when: true
+      failed_when: false
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  # --- Wait for healthy ------------------------------------------------
+    # --- Wait for healthy ------------------------------------------------
 
-  - name: Wait until this host is streaming in the cluster (HA)
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
-    register: _ud_poll
-    changed_when: false
-    failed_when: false
-    retries: "{{ ((undrain_wait_s | int) / 10) | int }}"
-    delay: 10
-    until:
-    - _ud_poll.rc == 0
-    - (_ud_poll.stdout | from_json
-       | selectattr('Member', 'equalto', inventory_hostname)
-       | map(attribute='State') | list | first | default(''))
-      in ['streaming', 'running']
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    - name: Wait until this host is streaming in the cluster (HA)
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+      register: _ud_poll
+      changed_when: false
+      failed_when: false
+      retries: "{{ ((undrain_wait_s | int) / 10) | int }}"
+      delay: 10
+      until:
+        - _ud_poll.rc == 0
+        - (_ud_poll.stdout | from_json | selectattr('Member', 'equalto', inventory_hostname) | map(attribute='State') | list | first | default('')) in
+          ['streaming', 'running']
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  - name: Wait until PG accepts queries (standalone)
-    ansible.builtin.wait_for:
-      host: 127.0.0.1
-      port: "{{ postgresql_port | default(5432) }}"
-      timeout: "{{ undrain_wait_s | int }}"
-    when: (postgresql_ha_mode | default('standalone')) != 'patroni'
+    - name: Wait until PG accepts queries (standalone)
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ postgresql_port | default(5432) }}"
+        timeout: "{{ undrain_wait_s | int }}"
+      when: (postgresql_ha_mode | default('standalone')) != 'patroni'
 
-  # --- Smoke query -----------------------------------------------------
+    # --- Smoke query -----------------------------------------------------
 
-  - name: Smoke SELECT 1 against the host
-    become: true
-    become_user: postgres
-    community.postgresql.postgresql_query:
-      db: postgres
-      query: "SELECT 1 AS one, pg_is_in_recovery() AS in_recovery, version() AS server_version"
-    register: _ud_smoke
-    failed_when: false
+    - name: Smoke SELECT 1 against the host
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: postgres
+        query: SELECT 1 AS one, pg_is_in_recovery() AS in_recovery, version() AS server_version
+      register: _ud_smoke
+      failed_when: false
 
-  - name: Capture final topology (HA only)
-    ansible.builtin.command:
-      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
-    register: _ud_list
-    changed_when: false
-    failed_when: false
-    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    - name: Capture final topology (HA only)
+      ansible.builtin.command:
+        cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
+      register: _ud_list
+      changed_when: false
+      failed_when: false
+      when: (postgresql_ha_mode | default('standalone')) == 'patroni'
 
-  - name: Surface undrain verdict
-    ansible.builtin.debug:
-      msg:
-      - "########################################################################"
-      - "Undrain complete for {{ inventory_hostname }}"
-      - "  Mode          : {{ postgresql_ha_mode | default('standalone') }}"
-      - "  Unit          : {{ _ud_unit }} (enabled + started)"
-      - "  Smoke query   : {{ (_ud_smoke.query_result | default([{}])) | first }}"
-      - "  Topology      :"
-      - "{{ _ud_list.stdout | default('(standalone -- no patronictl)') }}"
-      - "########################################################################"
+    - name: Surface undrain verdict
+      ansible.builtin.debug:
+        msg:
+          - "########################################################################"
+          - Undrain complete for {{ inventory_hostname }}
+          - "  Mode          : {{ postgresql_ha_mode | default('standalone') }}"
+          - "  Unit          : {{ _ud_unit }} (enabled + started)"
+          - "  Smoke query   : {{ (_ud_smoke.query_result | default([{}])) | first }}"
+          - "  Topology      :"
+          - "{{ _ud_list.stdout | default('(standalone -- no patronictl)') }}"
+          - "########################################################################"

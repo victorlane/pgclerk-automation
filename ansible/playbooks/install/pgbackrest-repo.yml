@@ -7,7 +7,7 @@
   roles:
     - role: os_baseline
 
-- name: pgBackRest install + configure
+- name: PgBackRest install + configure
   hosts: postgres_servers:backup_servers
   become: true
   gather_facts: true

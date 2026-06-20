@@ -14,7 +14,7 @@
     group: "{{ node_exporter_group }}"
     system: true
     shell: /sbin/nologin
-    home: "/var/lib/{{ node_exporter_user }}"
+    home: /var/lib/{{ node_exporter_user }}
     create_home: false
     state: present
 
@@ -37,8 +37,8 @@
     group: root
     mode: "0644"
   notify:
-  - node_exporter reload systemd
-  - node_exporter restart
+    - node_exporter reload systemd
+    - node_exporter restart
 
 - name: Flush handlers so the unit is in place before enable/start
   ansible.builtin.meta: flush_handlers
