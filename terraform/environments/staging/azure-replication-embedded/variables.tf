@@ -1,56 +1,64 @@
 variable "region" {
-  type = string
-  description = "Cloud region (e.g. eu-west-1 for AWS, europe-west4 for GCP, westeurope for Azure)."
+  type    = string
+  default = "westeurope"
 }
-
 variable "owner" {
-  type = string
-  description = "Resource owner tag — usually the customer slug."
-  default     = "pgclerk"
+  type    = string
+  default = "pgclerk"
 }
-
-variable "key_name" {
-  type = string
-  description = "SSH key pair name uploaded to the cloud provider; pgclerk's Semaphore deploy key."
-  default     = "pgclerk-dev"
+variable "cluster_name" {
+  type    = string
+  default = "sandbox"
 }
-
+variable "ssh_public_key" {
+  type    = string
+  default = ""
+}
+variable "extra_ssh_keys" {
+  type    = list(string)
+  default = []
+}
 variable "allow_ssh_cidr" {
-  type = string
-  description = "CIDR allowed to SSH into PG hosts. Set this to the operator's public IP (or Semaphore's egress IP)."
-  default     = "0.0.0.0/0"
+  type    = string
+  default = "0.0.0.0/0"
 }
-
 variable "use_spot" {
-  type = bool
-  description = "Use spot/preemptible instances where the provider allows."
-  default     = true
+  type    = bool
+  default = false
 }
-
 variable "pg_count" {
-  type = number
-  description = "PostgreSQL node count."
+  type    = number
+  default = 3
 }
-
 variable "pg_instance_type" {
-  type = string
-  description = "Provider-specific instance type for PG nodes."
+  type    = string
+  default = "Standard_B2s"
 }
-
 variable "pg_data_volume_size" {
-  type = number
-  description = "Data volume size in GiB."
-  default     = 20
-}
-
-variable "subscription_id" {
-  type = string
+  type    = number
+  default = 20
 }
 variable "etcd_count" {
-  type = number
+  type    = number
   default = 0
 }
 variable "etcd_instance_type" {
-  type = string
+  type    = string
   default = "Standard_B1ms"
+}
+variable "backup_count" {
+  type    = number
+  default = 0
+}
+variable "backup_instance_type" {
+  type    = string
+  default = "Standard_B2s"
+}
+variable "backup_data_volume_size" {
+  type    = number
+  default = 50
+}
+variable "key_name" {
+  type    = string
+  default = "pgclerk-dev"
 }
