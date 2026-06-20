@@ -13,14 +13,30 @@
     _pgtuned_wal_buffers_mb: ""
     _pgtuned_min_wal_size_mb: ""
     _pgtuned_max_wal_size_mb: ""
+    _pgtuned_max_slot_wal_keep_size_mb: ""
     _pgtuned_checkpoint_completion_target: ""
     _pgtuned_random_page_cost: ""
     _pgtuned_effective_io_concurrency: ""
+    _pgtuned_maintenance_io_concurrency: ""
     _pgtuned_default_statistics_target: ""
     _pgtuned_max_worker_processes: ""
     _pgtuned_max_parallel_workers: ""
     _pgtuned_max_parallel_workers_per_gather: ""
     _pgtuned_max_parallel_maintenance_workers: ""
+    _pgtuned_huge_pages: ""
+    _pgtuned_jit: ""
+    _pgtuned_wal_compression: ""
+    _pgtuned_track_io_timing: ""
+    _pgtuned_autovacuum_vacuum_cost_limit: ""
+    _pgtuned_autovacuum_naptime: ""
+    _pgtuned_log_autovacuum_min_duration: ""
+    _pgtuned_idle_in_transaction_session_timeout: ""
+    _pgtuned_bgwriter_lru_maxpages: ""
+    _pgtuned_bgwriter_delay: ""
+    _pgtuned_hot_standby_feedback: ""
+    _pg_experimental_recommendations: {}
+    _pg_experimental_applied: {}
+    _pgt_pgver: "{{ postgresql_version | int }}"
 
 # IMPERATIVE-ONLY.  `tags: [never, autotune]` means this include is skipped
 # unless the operator passes --tags autotune.  postgresql_autotune is the
@@ -47,11 +63,24 @@
     _pg_checkpoint_completion_target: "{{ postgresql_checkpoint_completion_target | default(_pgtuned_checkpoint_completion_target, true) }}"
     _pg_random_page_cost: "{{ postgresql_random_page_cost | default(_pgtuned_random_page_cost, true) }}"
     _pg_effective_io_concurrency: "{{ postgresql_effective_io_concurrency | default(_pgtuned_effective_io_concurrency, true) }}"
+    _pg_maintenance_io_concurrency: "{{ postgresql_maintenance_io_concurrency | default(_pgtuned_maintenance_io_concurrency, true) }}"
     _pg_default_statistics_target: "{{ postgresql_default_statistics_target | default(_pgtuned_default_statistics_target, true) }}"
     _pg_max_worker_processes: "{{ postgresql_max_worker_processes | default(_pgtuned_max_worker_processes, true) }}"
     _pg_max_parallel_workers: "{{ postgresql_max_parallel_workers | default(_pgtuned_max_parallel_workers, true) }}"
     _pg_max_parallel_workers_per_gather: "{{ postgresql_max_parallel_workers_per_gather | default(_pgtuned_max_parallel_workers_per_gather, true) }}"
     _pg_max_parallel_maintenance_workers: "{{ postgresql_max_parallel_maintenance_workers | default(_pgtuned_max_parallel_maintenance_workers, true) }}"
+    _pg_max_slot_wal_keep_size: "{{ postgresql_max_slot_wal_keep_size | default(_pgtuned_max_slot_wal_keep_size_mb ~ 'MB' if _pgtuned_max_slot_wal_keep_size_mb else '', true) }}"
+    _pg_huge_pages: "{{ postgresql_huge_pages | default(_pgtuned_huge_pages, true) }}"
+    _pg_jit: "{{ postgresql_jit | default(_pgtuned_jit, true) }}"
+    _pg_wal_compression: "{{ postgresql_wal_compression | default(_pgtuned_wal_compression, true) }}"
+    _pg_track_io_timing: "{{ postgresql_track_io_timing | default(_pgtuned_track_io_timing, true) }}"
+    _pg_autovacuum_vacuum_cost_limit: "{{ postgresql_autovacuum_vacuum_cost_limit | default(_pgtuned_autovacuum_vacuum_cost_limit, true) }}"
+    _pg_autovacuum_naptime: "{{ postgresql_autovacuum_naptime | default(_pgtuned_autovacuum_naptime, true) }}"
+    _pg_log_autovacuum_min_duration: "{{ postgresql_log_autovacuum_min_duration | default(_pgtuned_log_autovacuum_min_duration, true) }}"
+    _pg_idle_in_transaction_session_timeout: "{{ postgresql_idle_in_transaction_session_timeout | default(_pgtuned_idle_in_transaction_session_timeout, true) }}"
+    _pg_bgwriter_lru_maxpages: "{{ postgresql_bgwriter_lru_maxpages | default(_pgtuned_bgwriter_lru_maxpages, true) }}"
+    _pg_bgwriter_delay: "{{ postgresql_bgwriter_delay | default(_pgtuned_bgwriter_delay, true) }}"
+    _pg_hot_standby_feedback: "{{ postgresql_hot_standby_feedback | default(_pgtuned_hot_standby_feedback, true) }}"
 
 # Snapshot the existing postgresql.conf so the template task can be told
 # whether changing it touched restart-required keys.  We diff after rendering.
@@ -116,6 +145,16 @@
     - hba_file
     - ident_file
     - logging_collector
+    - huge_pages
+    - track_io_timing
+    # jit, wal_compression, hot_standby_feedback, autovacuum_*,
+    # bgwriter_*, idle_in_transaction_session_timeout,
+    # effective_io_concurrency, maintenance_io_concurrency,
+    # random_page_cost, default_statistics_target,
+    # max_slot_wal_keep_size, log_autovacuum_min_duration,
+    # max_parallel_*, max_wal_size, min_wal_size,
+    # checkpoint_completion_target -- all reload-only (PG context=sighup or
+    # user/superuser). They are intentionally NOT listed here.
 
 - name: Compute whether restart is required vs reload-only
   ansible.builtin.set_fact:

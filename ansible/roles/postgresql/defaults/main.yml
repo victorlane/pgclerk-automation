@@ -48,11 +48,16 @@ postgresql_autotune: false
 #             bigger default_statistics_target, more parallelism.
 postgresql_workload_profile: mixed         # oltp | mixed | dw
 
-# Storage class. Determines random_page_cost + effective_io_concurrency.
+# Storage class. Autotune discovers this from /sys/block (rotational +
+# NVMe presence) and from /proc/mounts (the data-dir mount); override only
+# when the discovery is wrong (RAID-on-HDD reporting as SSD, etc.).
 #
-#   ssd  - SSD, NVMe, EBS gp3/io2 (the modern default).
-#   hdd  - spinning disk. Higher random_page_cost, low IO concurrency.
-postgresql_storage_class: ssd              # ssd | hdd
+#   nvme    - NVMe device backing the data dir (local SSD, EBS on Nitro,
+#             pd-extreme, UltraSSD). Highest IO concurrency.
+#   ssd     - any non-rotational, non-NVMe block device. Network-attached SSD.
+#   hdd     - rotational block device.
+#   ""      - empty (default) = autodetect.
+postgresql_storage_class: ""               # "" (autodetect) | nvme | ssd | hdd
 
 # Memory + tuning knobs. Leave any of these empty ("") to let auto-tuning
 # compute them; set a value to override.
@@ -66,11 +71,80 @@ postgresql_max_wal_size: ""
 postgresql_checkpoint_completion_target: ""
 postgresql_random_page_cost: ""
 postgresql_effective_io_concurrency: ""
+postgresql_maintenance_io_concurrency: ""
 postgresql_default_statistics_target: ""
 postgresql_max_worker_processes: ""
 postgresql_max_parallel_workers_per_gather: ""
 postgresql_max_parallel_workers: ""
 postgresql_max_parallel_maintenance_workers: ""
+
+# -- Additional safe tuning knobs ------------------------------------------
+# These are well-understood, low-risk improvements over PG's stock defaults
+# on a dedicated MSP-managed DB host. Each is auto-derived from version /
+# host facts when left empty. Set a value to override.
+#
+#   huge_pages              - 'try' avoids a startup failure if THP / 2MB
+#                             pages aren't reserved; 'on' requires them.
+#                             We default to 'try' (safe everywhere).
+#   jit                     - PG 12+ default is 'on' upstream; we keep it on
+#                             but cap jit_above_cost so OLTP isn't surprised.
+#   wal_compression         - lz4 on PG 15+ (must be compiled in -- PGDG
+#                             builds with --with-lz4). Falls back to 'on'
+#                             (pglz) on 13/14 and 'off' below that.
+#   track_io_timing         - cheap on modern kernels, huge analytic value.
+#   autovacuum_vacuum_cost_limit - PG default 200 throttles vacuum on busy
+#                             tables. 2000-3000 is the community consensus
+#                             for SSD-backed hosts.
+#   autovacuum_naptime      - 60s default is fine for small clusters; for
+#                             larger hosts (>16 vCPU, lots of tables) 30s
+#                             smooths things out.
+#   log_autovacuum_min_duration - 0 logs everything; 1000ms is the practical
+#                             "show me the slow ones" baseline.
+#   idle_in_transaction_session_timeout - long-lived idle txns block VACUUM
+#                             and can wedge replicas via hot_standby_feedback.
+#                             10 minutes is the standard guard rail.
+#   bgwriter_lru_maxpages   - bumped to 1000 (from 100) on SSD-class disks
+#                             to flush dirty pages ahead of checkpoints.
+#   bgwriter_delay          - 200ms default -> 100ms on SSD.
+#   max_slot_wal_keep_size  - global cap so a dead replication slot can't
+#                             eat the WAL volume. Defaults to 2x max_wal_size.
+#   hot_standby_feedback    - 'on' when running with replicas to avoid
+#                             query-cancel storms. Auto-flips on when
+#                             postgresql_ha_mode == 'patroni'.
+postgresql_huge_pages: ""
+postgresql_jit: ""
+postgresql_wal_compression: ""
+postgresql_track_io_timing: ""
+postgresql_autovacuum_vacuum_cost_limit: ""
+postgresql_autovacuum_naptime: ""
+postgresql_log_autovacuum_min_duration: ""
+postgresql_idle_in_transaction_session_timeout: ""
+postgresql_bgwriter_lru_maxpages: ""
+postgresql_bgwriter_delay: ""
+postgresql_max_slot_wal_keep_size: ""
+postgresql_hot_standby_feedback: ""
+
+# -- Experimental knobs (REPORTED, NOT APPLIED unless opted in) ------------
+# The autotune playbook lists these in its summary as "experimental
+# candidates" so an operator can see what *could* be enabled, but no value
+# is written to postgresql.conf unless the operator names the knob in
+# postgresql_experimental_enabled. This keeps "safe and known" the
+# default behaviour while still surfacing the upgrade path.
+#
+# Recognised knob slugs (the slug == the postgres parameter name):
+#   - jit_above_cost                  (lower it to 50000 on DW; default 100000)
+#   - parallel_leader_participation   (off can help analytics; can hurt OLTP)
+#   - enable_partitionwise_join       (large planner win on partitioned schemas)
+#   - enable_partitionwise_aggregate  (ditto, slightly more planner cost)
+#   - recovery_prefetch               (PG 15+; needs effective_io_concurrency)
+#   - io_method                       (PG 18+; 'worker' moves IO off backends)
+#   - checkpoint_flush_after          (smoother checkpoint IO on busy hosts)
+#   - backend_flush_after             (per-backend variant; rarely needed)
+#   - wal_init_zero=off               (skip pre-zeroing WAL on COW filesystems)
+#
+# Override with e.g.
+#   postgresql_experimental_enabled: [jit_above_cost, recovery_prefetch]
+postgresql_experimental_enabled: []
 
 # Only pg_stat_statements is universally useful for an MSP (query insight).
 # pgaudit, pgcrypto, citext etc. are workload-specific and should be added

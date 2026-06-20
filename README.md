@@ -54,6 +54,23 @@ scripts/             # CI helpers, dev shortcuts
 To add a new playbook, edit `meta/catalogue.yml` (validated in CI). The
 UI auto-picks it up after the next Semaphore sync.
 
+## Autotune
+
+PostgreSQL autotuning (memory, WAL, I/O, autovacuum, parallelism) is
+imperative-only:
+
+```sh
+ansible-playbook ansible/playbooks/maintenance/autotune.yml --limit pg-1
+```
+
+Storage class, CPU, RAM, and cloud provider are discovered on the
+host; nothing has to be declared in inventory. Experimental knobs
+(`jit_above_cost`, `recovery_prefetch`, `io_method=worker`, …) are
+reported in the run summary but only applied when an operator opts
+in via `postgresql_experimental_enabled`. See
+[`ansible/roles/postgresql/README.md`](ansible/roles/postgresql/README.md)
+for the full list and the precedence rules.
+
 ## Conventions
 
 - Roles never call other roles directly — composition happens at the

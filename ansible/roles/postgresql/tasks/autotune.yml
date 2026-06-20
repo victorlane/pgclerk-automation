@@ -1,46 +1,168 @@
 ---
-# Derive every memory, WAL, parallelism, and I/O knob from host facts under
-# the MSP assumption that this VM is a dedicated PostgreSQL host. Each
-# postgresql_<knob> default in defaults/main.yml is "" -- the template
-# resolves the rendered value as `postgresql_<knob> | default(_pgtuned_<knob>)`
-# so any explicit override wins.
+# Derive memory, WAL, parallelism, I/O, autovacuum, and write-path knobs
+# from host facts and from on-host discovery. The MSP assumption is that
+# the VM is a dedicated PostgreSQL host. Every postgresql_<knob> default
+# in defaults/main.yml is "" -- the template resolves the rendered value
+# as `postgresql_<knob> | default(_pgtuned_<knob>)` so any explicit
+# override wins.
+#
+# What is discovered, not declared:
+#   - CPU vCPUs, architecture (ansible_facts).
+#   - RAM (ansible_facts.memtotal_mb).
+#   - The data-dir mountpoint and the backing block device (/proc/mounts).
+#   - Storage class: NVMe via device-name prefix, SSD/HDD via
+#     /sys/block/<dev>/queue/rotational.
+#   - Cloud provider via DMI vendor string in
+#     /sys/class/dmi/id/sys_vendor (KVM / Amazon EC2 / Google / Microsoft
+#     Corporation). Informational only -- it goes into the tuning summary.
 #
 # References:
 #   - postgresql wiki "Tuning Your PostgreSQL Server"
 #   - pgtune (https://github.com/le0pard/pgtune) for the formula shapes
 #
-# The numbers below are pgtune's "OLTP" / "Mixed" / "DW" presets adapted for
-# a dedicated DB host. We deliberately diverge from pgtune in a few places:
+# Diverges from pgtune in:
 #   - shared_buffers caps at ~40GB (PG's own caching diminishing returns).
-#   - random_page_cost = 1.1 for SSD (default 4.0 assumes spinning rust).
-#   - effective_io_concurrency = 200 for SSD (NVMe queue depth).
+#   - random_page_cost = 1.1 for SSD/NVMe (default 4.0 assumes spinning rust).
+#   - effective_io_concurrency = 256 (NVMe) / 200 (SSD) / 2 (HDD).
+#   - maintenance_io_concurrency mirrors effective_io_concurrency at a
+#     conservative fraction.
+#   - autovacuum_vacuum_cost_limit raised from 200 to 2000 on SSD-class disks.
 
+# ---------------------------------------------------------------------
+# 1. Host facts (RAM, CPU, arch)
+# ---------------------------------------------------------------------
 - name: Capture host facts for tuning
   ansible.builtin.set_fact:
     _pgt_ram_mb: "{{ ansible_facts.memtotal_mb | int }}"
     _pgt_cpus: "{{ ansible_facts.processor_vcpus | default(ansible_facts.processor_count) | int }}"
+    _pgt_arch: "{{ ansible_facts.architecture | default('') }}"
 
+# ---------------------------------------------------------------------
+# 2. Cloud-provider discovery (informational, drives nothing critical)
+# ---------------------------------------------------------------------
+- name: Read DMI sys_vendor for cloud detection
+  ansible.builtin.slurp:
+    src: /sys/class/dmi/id/sys_vendor
+  register: _pgt_dmi
+  failed_when: false
+  changed_when: false
+
+- name: Derive cloud_provider from DMI
+  ansible.builtin.set_fact:
+    _pgt_cloud: >-
+      {% set v = (_pgt_dmi.content | default('') | b64decode | trim | lower) -%}
+      {%- if 'amazon' in v -%}aws
+      {%- elif 'google' in v -%}gcp
+      {%- elif 'microsoft' in v -%}azure
+      {%- else -%}onprem
+      {%- endif -%}
+
+# ---------------------------------------------------------------------
+# 3. Data-directory backing device + storage class
+# ---------------------------------------------------------------------
+# Walk /proc/mounts looking for the mountpoint that owns the data dir.
+# Falls back to "/" if nothing matches (very early-bootstrap or
+# autotune-compute-only on the controller).
+- name: Discover the data-dir mountpoint and source device
+  ansible.builtin.shell: |
+    set -eu
+    target='{{ postgresql_data_dir | default("/var/lib/postgresql") }}'
+    # findmnt walks up parents until it finds a real mountpoint.
+    findmnt -T "$target" -o SOURCE,FSTYPE -nr 2>/dev/null \
+      || findmnt -T / -o SOURCE,FSTYPE -nr
+  register: _pgt_mount
+  changed_when: false
+  failed_when: false
+
+- name: Parse mount source and filesystem
+  ansible.builtin.set_fact:
+    _pgt_device_path: "{{ (_pgt_mount.stdout | default('')).split() | first | default('') }}"
+    _pgt_fstype: "{{ (_pgt_mount.stdout | default('')).split() | last | default('') }}"
+
+# Resolve down to the parent block device (sda from sda1, nvme0n1 from
+# nvme0n1p1). lsblk -no PKNAME returns the parent name without the
+# /dev/ prefix; if PKNAME is empty the source already *is* the parent.
+- name: Resolve to the underlying block device
+  ansible.builtin.shell: |
+    set -eu
+    src='{{ _pgt_device_path }}'
+    [ -z "$src" ] && { echo ""; exit 0; }
+    parent=$(lsblk -no PKNAME "$src" 2>/dev/null | head -n1)
+    if [ -n "$parent" ]; then
+      echo "$parent"
+    else
+      basename "$src"
+    fi
+  register: _pgt_blockdev
+  changed_when: false
+  failed_when: false
+
+- name: Set block-device fact
+  ansible.builtin.set_fact:
+    _pgt_block: "{{ _pgt_blockdev.stdout | default('') | trim }}"
+
+- name: Probe /sys/block for rotational flag
+  ansible.builtin.slurp:
+    src: "/sys/block/{{ _pgt_block }}/queue/rotational"
+  register: _pgt_rotational_raw
+  when: _pgt_block | length > 0
+  failed_when: false
+  changed_when: false
+
+- name: Derive storage_class (autodetect)
+  ansible.builtin.set_fact:
+    _pgt_storage_class_auto: >-
+      {%- set is_nvme = _pgt_block.startswith('nvme') -%}
+      {%- set rot = (_pgt_rotational_raw.content | default('MA==') | b64decode | trim) -%}
+      {%- if is_nvme -%}nvme
+      {%- elif rot == '0' -%}ssd
+      {%- elif rot == '1' -%}hdd
+      {%- else -%}ssd
+      {%- endif -%}
+
+# Operator override wins; otherwise the autodetected value is used.
+- name: Resolve storage_class
+  ansible.builtin.set_fact:
+    _pgt_storage_class: >-
+      {{ postgresql_storage_class
+         if (postgresql_storage_class | default('')) | length > 0
+         else _pgt_storage_class_auto }}
+
+# ---------------------------------------------------------------------
+# 4. PostgreSQL major version (drives jit / wal_compression / io_method
+#    eligibility). Use the configured postgresql_version because the
+#    binary may not be installed yet at autotune-compute time.
+# ---------------------------------------------------------------------
+- name: Set PG major version int
+  ansible.builtin.set_fact:
+    _pgt_pgver: "{{ postgresql_version | int }}"
+
+# ---------------------------------------------------------------------
+# 5. Parallelism caps. max_worker_processes covers BOTH parallel queries
+#    and parallel maintenance; we set it to vCPUs. Per-gather workers cap
+#    at min(vCPU/2, 4) for OLTP/mixed, allow more for DW.
+# ---------------------------------------------------------------------
 - name: Compute parallelism caps
   ansible.builtin.set_fact:
     _pgtuned_max_worker_processes: "{{ _pgt_cpus | int }}"
     _pgtuned_max_parallel_workers: "{{ _pgt_cpus | int }}"
-    _pgtuned_max_parallel_workers_per_gather: "{{ [(_pgt_cpus | int // 2), 4] | min }}"
+    _pgtuned_max_parallel_workers_per_gather: >-
+      {{ {'oltp': [(_pgt_cpus | int // 2), 4] | min,
+          'mixed': [(_pgt_cpus | int // 2), 4] | min,
+          'dw':   [(_pgt_cpus | int // 2), 8] | min }[postgresql_workload_profile] }}
     _pgtuned_max_parallel_maintenance_workers: "{{ [(_pgt_cpus | int // 2), 4] | min }}"
 
-# Memory tuning. shared_buffers = 25% RAM with a hard cap; effective_cache_size
-# = 75% RAM (planner hint, not allocation); maintenance_work_mem = 5% RAM
-# capped at 2GB. work_mem is the trickiest: it's per-sort-node, not per-query,
-# and a query can have many sort nodes; divide remaining RAM by
-# max_connections * 3 to stay safe. Workload profile shifts work_mem +/-.
+# ---------------------------------------------------------------------
+# 6. Memory tuning. shared_buffers=25%RAM (capped 40GB),
+#    effective_cache_size=75%RAM, maintenance_work_mem=5%RAM (capped 2GB),
+#    work_mem = (remaining RAM) / (max_connections * concurrency_factor).
+# ---------------------------------------------------------------------
 - name: Compute memory tuning
   ansible.builtin.set_fact:
     _pgtuned_shared_buffers_mb: "{{ [((_pgt_ram_mb | int) // 4), 40960] | min }}"
     _pgtuned_effective_cache_mb: "{{ ((_pgt_ram_mb | int) * 3) // 4 }}"
     _pgtuned_maint_work_mb: "{{ [((_pgt_ram_mb | int) // 20), 2048] | min }}"
 
-# work_mem: (remaining RAM after shared_buffers + maintenance) divided
-# across (max_connections * concurrent_sort_factor). DW workloads tolerate
-# more memory per sort because they have few sessions; OLTP needs less.
 - name: Compute work_mem divisor (workload-dependent)
   ansible.builtin.set_fact:
     _pgt_work_divisor: >-
@@ -56,55 +178,245 @@
            1024
          ] | min }}
 
-# WAL + checkpointing. max_wal_size between checkpoints; larger = better
-# throughput but longer crash recovery. Use RAM/16 as a rough proxy for
-# disk-throughput class, clamped to 2-16GB.
+# ---------------------------------------------------------------------
+# 7. WAL + checkpointing. max_wal_size proxy = RAM/16 clamped 2-16GB.
+#    On NVMe-backed disks we let it grow further (32GB) because the disk
+#    can absorb the checkpoint write storm.
+# ---------------------------------------------------------------------
 - name: Compute WAL sizing
   ansible.builtin.set_fact:
-    _pgtuned_max_wal_size_mb: "{{ [[((_pgt_ram_mb | int) // 16), 16384] | min, 2048] | max }}"
+    _pgtuned_max_wal_size_mb: >-
+      {{ [
+           [((_pgt_ram_mb | int) // 16),
+            (32768 if _pgt_storage_class == 'nvme' else 16384)] | min,
+           2048
+         ] | max }}
 
 - name: Compute min_wal_size from max
   ansible.builtin.set_fact:
     _pgtuned_min_wal_size_mb: "{{ (_pgtuned_max_wal_size_mb | int) // 4 }}"
 
-# wal_buffers is normally 1/32 of shared_buffers, capped at 16MB. PG can
-# auto-compute via -1 but explicit avoids surprises.
-- name: Compute wal_buffers
+- name: Compute wal_buffers (capped 16MB)
   ansible.builtin.set_fact:
     _pgtuned_wal_buffers_mb: "{{ [((_pgtuned_shared_buffers_mb | int) // 32), 16] | min }}"
 
-# Storage-class derived I/O knobs. SSD/EBS gp3 looks like a single fast disk
-# with high concurrency; HDD looks the opposite.
-- name: Compute I/O tuning (storage_class={{ postgresql_storage_class }})
+# ---------------------------------------------------------------------
+# 8. Storage-class-derived I/O knobs.
+# ---------------------------------------------------------------------
+- name: Compute I/O tuning (storage_class={{ _pgt_storage_class }})
   ansible.builtin.set_fact:
     _pgtuned_random_page_cost: >-
-      {{ {'ssd': 1.1, 'hdd': 4.0}[postgresql_storage_class] }}
+      {{ {'nvme': 1.05, 'ssd': 1.1, 'hdd': 4.0}[_pgt_storage_class] }}
     _pgtuned_effective_io_concurrency: >-
-      {{ {'ssd': 200, 'hdd': 2}[postgresql_storage_class] }}
+      {{ {'nvme': 256, 'ssd': 200, 'hdd': 2}[_pgt_storage_class] }}
+    # maintenance_io_concurrency (PG13+) drives VACUUM / index-build
+    # prefetch. Keep it lower than effective_io_concurrency so a single
+    # busy index build can't starve query backends.
+    _pgtuned_maintenance_io_concurrency: >-
+      {{ {'nvme': 64, 'ssd': 50, 'hdd': 2}[_pgt_storage_class] }}
 
-# Workload-specific knobs. checkpoint_completion_target stays at PG 14+'s
-# default of 0.9 across profiles; default_statistics_target bumps for DW.
+# ---------------------------------------------------------------------
+# 9. Workload-specific knobs.
+# ---------------------------------------------------------------------
 - name: Compute workload-specific knobs (profile={{ postgresql_workload_profile }})
   ansible.builtin.set_fact:
     _pgtuned_checkpoint_completion_target: "0.9"
     _pgtuned_default_statistics_target: >-
       {{ {'oltp': 100, 'mixed': 100, 'dw': 500}[postgresql_workload_profile] }}
 
-- name: Display tuning summary
+# ---------------------------------------------------------------------
+# 10. Safe additional knobs. Each has a single recommended value per
+#     (PG version, storage class, workload, HA mode) tuple.
+# ---------------------------------------------------------------------
+- name: Compute safe additional knobs
+  ansible.builtin.set_fact:
+    # 'try' = use huge pages if reserved at the OS, otherwise fall back.
+    # The os_baseline role reserves vm.nr_hugepages on supported families;
+    # 'try' means we don't break the start when it doesn't.
+    _pgtuned_huge_pages: "try"
+
+    # jit on by default for PG12+ (it's already the upstream default, we
+    # just make it explicit). Reported and applied; experimental knob
+    # lets DW operators lower jit_above_cost.
+    _pgtuned_jit: "{{ 'on' if _pgt_pgver | int >= 12 else 'off' }}"
+
+    # wal_compression: lz4 on PG15+, pglz ('on') on 13-14, off below.
+    _pgtuned_wal_compression: >-
+      {{ 'lz4' if _pgt_pgver | int >= 15
+         else ('on' if _pgt_pgver | int >= 13 else 'off') }}
+
+    # IO timing instrumentation. Required for pg_stat_statements I/O
+    # columns and for the postgres_exporter dashboards. Cheap on x86_64
+    # with rdtsc and on modern arm64.
+    _pgtuned_track_io_timing: "on"
+
+    # Autovacuum throughput. Default cost_limit=200 throttles vacuum on
+    # SSD-class disks. 2000 is the community consensus baseline.
+    _pgtuned_autovacuum_vacuum_cost_limit: >-
+      {{ '2000' if _pgt_storage_class in ['nvme', 'ssd']
+         else '200' }}
+
+    # Naptime: tighter on larger hosts (more relations to scan), default
+    # otherwise.
+    _pgtuned_autovacuum_naptime: >-
+      {{ '30s' if (_pgt_cpus | int) >= 16 else '60s' }}
+
+    # Log autovacuum runs taking >1s. Mid-ground for noise.
+    _pgtuned_log_autovacuum_min_duration: "1000ms"
+
+    # Idle-in-txn guard rail. Long-lived idle txns block VACUUM and
+    # wedge replicas via hot_standby_feedback.
+    _pgtuned_idle_in_transaction_session_timeout: "10min"
+
+    # bgwriter on SSD-class disks: more pages per cycle, shorter delay,
+    # so a checkpoint storm finds less still-dirty work to do.
+    _pgtuned_bgwriter_lru_maxpages: >-
+      {{ '1000' if _pgt_storage_class in ['nvme', 'ssd'] else '100' }}
+    _pgtuned_bgwriter_delay: >-
+      {{ '100ms' if _pgt_storage_class in ['nvme', 'ssd'] else '200ms' }}
+
+    # Cap WAL retention from a dead replication slot. 2x max_wal_size is
+    # enough room to recover a transient slot-disconnect, not enough to
+    # fill the WAL volume.
+    _pgtuned_max_slot_wal_keep_size_mb: "{{ (_pgtuned_max_wal_size_mb | int) * 2 }}"
+
+    # hot_standby_feedback: on for HA topologies (Patroni-managed standby
+    # avoids query-cancel storms); off for standalone (no replica =
+    # nothing to feed back).
+    _pgtuned_hot_standby_feedback: >-
+      {{ 'on' if postgresql_ha_mode == 'patroni' else 'off' }}
+
+# ---------------------------------------------------------------------
+# 11. Experimental knob recommendations (NOT applied unless the operator
+#     adds the slug to postgresql_experimental_enabled). The recommended
+#     value is computed; the *application* is gated downstream.
+# ---------------------------------------------------------------------
+- name: Compute experimental knob recommendations
+  ansible.builtin.set_fact:
+    _pg_experimental_recommendations:
+      jit_above_cost:
+        value: "{{ '50000' if postgresql_workload_profile == 'dw' else '100000' }}"
+        reason: >-
+          Lower jit_above_cost surfaces JIT for medium-cost analytical plans.
+          Helps DW (long analytical queries), can pessimise OLTP (JIT compile
+          overhead per plan).
+        applies_when_pg_min: 12
+      parallel_leader_participation:
+        value: "off"
+        reason: >-
+          Off frees the leader to merge worker results rather than scan
+          itself -- measurable analytics win, OLTP loss.
+        applies_when_pg_min: 11
+      enable_partitionwise_join:
+        value: "on"
+        reason: >-
+          Large planner win on partitioned schemas. Planner cost grows with
+          partition count -- recommend reviewing on schemas with >1000
+          partitions.
+        applies_when_pg_min: 11
+      enable_partitionwise_aggregate:
+        value: "on"
+        reason: >-
+          Same family as partitionwise_join, slightly more planner work,
+          similar pay-off for analytic GROUP BY on partitioned tables.
+        applies_when_pg_min: 11
+      recovery_prefetch:
+        value: "try"
+        reason: >-
+          Replica replay prefetches referenced pages using
+          effective_io_concurrency. Big win on async replicas behind a
+          write-heavy primary; needs effective_io_concurrency > 0 (we set
+          {{ _pgtuned_effective_io_concurrency }}).
+        applies_when_pg_min: 15
+      io_method:
+        value: "worker"
+        reason: >-
+          PG18+ async I/O. 'worker' moves I/O submission off backends to
+          dedicated workers -- improves tail latency on bursty workloads.
+          Set io_workers separately if you enable this.
+        applies_when_pg_min: 18
+      checkpoint_flush_after:
+        value: "256kB"
+        reason: >-
+          Asks the kernel to flush dirty writeback every 256kB during a
+          checkpoint -- smoother I/O on busy hosts, less work for the
+          final fsync.
+        applies_when_pg_min: 9
+      backend_flush_after:
+        value: "512kB"
+        reason: >-
+          Per-backend variant of checkpoint_flush_after for large bulk
+          writes (COPY, CREATE INDEX). Rarely needed when bgwriter is
+          tuned.
+        applies_when_pg_min: 9
+      wal_init_zero:
+        value: "off"
+        reason: >-
+          Skip the pre-zeroing of new WAL segments. Only safe on CoW
+          filesystems (ZFS, btrfs) where the zero write is meaningless
+          and just costs IO.
+        applies_when_pg_min: 12
+
+# ---------------------------------------------------------------------
+# 12. Build the applied-experimental subset (only knobs the operator
+#     opted into AND that exist in the recommendations dict). The
+#     per-knob version filter happens in the template via the
+#     applies_when_pg_min check; here we just record what the operator
+#     asked for so the summary can mark it [APPLIED].
+# ---------------------------------------------------------------------
+- name: Filter experimental knobs by opt-in
+  ansible.builtin.set_fact:
+    _pg_experimental_applied: >-
+      {{ _pg_experimental_recommendations
+         | dict2items
+         | selectattr('key', 'in', postgresql_experimental_enabled)
+         | items2dict }}
+
+# ---------------------------------------------------------------------
+# 13. Tuning summary -- always reported. Lists applied values AND every
+#     experimental candidate, marked clearly. The operator copy-pastes
+#     a knob into postgresql_experimental_enabled to opt in.
+# ---------------------------------------------------------------------
+- name: Display tuning summary (applied + experimental candidates)
   ansible.builtin.debug:
     msg:
-    - "Auto-tuning (host={{ inventory_hostname }}, RAM={{ _pgt_ram_mb }}MB, vCPU={{ _pgt_cpus }}, profile={{ postgresql_workload_profile }}, storage={{ postgresql_storage_class }})"
-    - "  shared_buffers              = {{ postgresql_shared_buffers              | default(_pgtuned_shared_buffers_mb            ~ 'MB', true) }}"
-    - "  effective_cache_size        = {{ postgresql_effective_cache_size        | default(_pgtuned_effective_cache_mb           ~ 'MB', true) }}"
-    - "  maintenance_work_mem        = {{ postgresql_maintenance_work_mem        | default(_pgtuned_maint_work_mb                ~ 'MB', true) }}"
-    - "  work_mem                    = {{ postgresql_work_mem                    | default(_pgtuned_work_mem_mb                  ~ 'MB', true) }}"
-    - "  wal_buffers                 = {{ postgresql_wal_buffers                 | default(_pgtuned_wal_buffers_mb               ~ 'MB', true) }}"
-    - "  min/max_wal_size            = {{ postgresql_min_wal_size                | default(_pgtuned_min_wal_size_mb              ~ 'MB', true) }} / {{ postgresql_max_wal_size | default(_pgtuned_max_wal_size_mb ~ 'MB', true) }}"
-    - "  checkpoint_completion_target= {{ postgresql_checkpoint_completion_target| default(_pgtuned_checkpoint_completion_target, true) }}"
-    - "  random_page_cost            = {{ postgresql_random_page_cost            | default(_pgtuned_random_page_cost,             true) }}"
-    - "  effective_io_concurrency    = {{ postgresql_effective_io_concurrency    | default(_pgtuned_effective_io_concurrency,     true) }}"
-    - "  default_statistics_target   = {{ postgresql_default_statistics_target   | default(_pgtuned_default_statistics_target,    true) }}"
-    - "  max_worker_processes        = {{ postgresql_max_worker_processes        | default(_pgtuned_max_worker_processes,         true) }}"
-    - "  max_parallel_workers        = {{ postgresql_max_parallel_workers        | default(_pgtuned_max_parallel_workers,         true) }}"
-    - "  max_parallel_*_per_gather   = {{ postgresql_max_parallel_workers_per_gather | default(_pgtuned_max_parallel_workers_per_gather, true) }}"
-    - "  max_parallel_maintenance    = {{ postgresql_max_parallel_maintenance_workers | default(_pgtuned_max_parallel_maintenance_workers, true) }}"
+    - "============================================================"
+    - "PG autotune  host={{ inventory_hostname }}"
+    - "             cloud={{ _pgt_cloud }}  arch={{ _pgt_arch }}  vCPU={{ _pgt_cpus }}  RAM={{ _pgt_ram_mb }}MB"
+    - "             data_dir={{ postgresql_data_dir | default('(unset, compute-only)') }}"
+    - "             device=/dev/{{ _pgt_block | default('(unknown)') }}  fstype={{ _pgt_fstype | default('?') }}"
+    - "             storage_class={{ _pgt_storage_class }}  (operator override: {{ 'yes' if (postgresql_storage_class | default('')) | length > 0 else 'no -- autodetected' }})"
+    - "             profile={{ postgresql_workload_profile }}  ha={{ postgresql_ha_mode }}  pg={{ _pgt_pgver }}"
+    - "------------------------------------------------------------"
+    - "APPLIED -- safe knobs"
+    - "  shared_buffers                     = {{ postgresql_shared_buffers              | default(_pgtuned_shared_buffers_mb            ~ 'MB', true) }}"
+    - "  effective_cache_size               = {{ postgresql_effective_cache_size        | default(_pgtuned_effective_cache_mb           ~ 'MB', true) }}"
+    - "  maintenance_work_mem               = {{ postgresql_maintenance_work_mem        | default(_pgtuned_maint_work_mb                ~ 'MB', true) }}"
+    - "  work_mem                           = {{ postgresql_work_mem                    | default(_pgtuned_work_mem_mb                  ~ 'MB', true) }}"
+    - "  wal_buffers                        = {{ postgresql_wal_buffers                 | default(_pgtuned_wal_buffers_mb               ~ 'MB', true) }}"
+    - "  min/max_wal_size                   = {{ postgresql_min_wal_size                | default(_pgtuned_min_wal_size_mb              ~ 'MB', true) }} / {{ postgresql_max_wal_size | default(_pgtuned_max_wal_size_mb ~ 'MB', true) }}"
+    - "  max_slot_wal_keep_size             = {{ postgresql_max_slot_wal_keep_size      | default(_pgtuned_max_slot_wal_keep_size_mb    ~ 'MB', true) }}"
+    - "  checkpoint_completion_target       = {{ postgresql_checkpoint_completion_target| default(_pgtuned_checkpoint_completion_target, true) }}"
+    - "  random_page_cost                   = {{ postgresql_random_page_cost            | default(_pgtuned_random_page_cost,             true) }}"
+    - "  effective_io_concurrency           = {{ postgresql_effective_io_concurrency    | default(_pgtuned_effective_io_concurrency,     true) }}"
+    - "  maintenance_io_concurrency         = {{ postgresql_maintenance_io_concurrency  | default(_pgtuned_maintenance_io_concurrency,   true) }}"
+    - "  default_statistics_target          = {{ postgresql_default_statistics_target   | default(_pgtuned_default_statistics_target,    true) }}"
+    - "  max_worker_processes               = {{ postgresql_max_worker_processes        | default(_pgtuned_max_worker_processes,         true) }}"
+    - "  max_parallel_workers               = {{ postgresql_max_parallel_workers        | default(_pgtuned_max_parallel_workers,         true) }}"
+    - "  max_parallel_workers_per_gather    = {{ postgresql_max_parallel_workers_per_gather | default(_pgtuned_max_parallel_workers_per_gather, true) }}"
+    - "  max_parallel_maintenance_workers   = {{ postgresql_max_parallel_maintenance_workers | default(_pgtuned_max_parallel_maintenance_workers, true) }}"
+    - "  huge_pages                         = {{ postgresql_huge_pages                  | default(_pgtuned_huge_pages,                   true) }}"
+    - "  jit                                = {{ postgresql_jit                         | default(_pgtuned_jit,                          true) }}"
+    - "  wal_compression                    = {{ postgresql_wal_compression             | default(_pgtuned_wal_compression,              true) }}"
+    - "  track_io_timing                    = {{ postgresql_track_io_timing             | default(_pgtuned_track_io_timing,              true) }}"
+    - "  autovacuum_vacuum_cost_limit       = {{ postgresql_autovacuum_vacuum_cost_limit | default(_pgtuned_autovacuum_vacuum_cost_limit, true) }}"
+    - "  autovacuum_naptime                 = {{ postgresql_autovacuum_naptime          | default(_pgtuned_autovacuum_naptime,           true) }}"
+    - "  log_autovacuum_min_duration        = {{ postgresql_log_autovacuum_min_duration | default(_pgtuned_log_autovacuum_min_duration,  true) }}"
+    - "  idle_in_transaction_session_timeout= {{ postgresql_idle_in_transaction_session_timeout | default(_pgtuned_idle_in_transaction_session_timeout, true) }}"
+    - "  bgwriter_lru_maxpages              = {{ postgresql_bgwriter_lru_maxpages       | default(_pgtuned_bgwriter_lru_maxpages,        true) }}"
+    - "  bgwriter_delay                     = {{ postgresql_bgwriter_delay              | default(_pgtuned_bgwriter_delay,               true) }}"
+    - "  hot_standby_feedback               = {{ postgresql_hot_standby_feedback        | default(_pgtuned_hot_standby_feedback,         true) }}"
+    - "------------------------------------------------------------"
+    - "EXPERIMENTAL CANDIDATES (NOT applied -- opt in via postgresql_experimental_enabled)"
+    - "{% for slug, rec in _pg_experimental_recommendations.items() %}{% if _pgt_pgver | int >= rec.applies_when_pg_min %}  - {{ slug }} = {{ rec.value }}{% if slug in postgresql_experimental_enabled %}   [APPLIED]{% endif %}\n    {{ rec.reason | trim | replace('\n', ' ') }}\n{% endif %}{% endfor %}"
+    - "============================================================"

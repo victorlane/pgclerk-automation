@@ -29,8 +29,14 @@ min_wal_size = {{ _pg_min_wal_size }}
 {% if _pg_max_wal_size %}
 max_wal_size = {{ _pg_max_wal_size }}
 {% endif %}
+{% if _pg_max_slot_wal_keep_size %}
+max_slot_wal_keep_size = {{ _pg_max_slot_wal_keep_size }}
+{% endif %}
 {% if _pg_checkpoint_completion_target %}
 checkpoint_completion_target = {{ _pg_checkpoint_completion_target }}
+{% endif %}
+{% if _pg_wal_compression %}
+wal_compression = {{ _pg_wal_compression }}
 {% endif %}
 
 # -- Planner / I/O -----------------------------------------------------------
@@ -40,8 +46,47 @@ random_page_cost = {{ _pg_random_page_cost }}
 {% if _pg_effective_io_concurrency %}
 effective_io_concurrency = {{ _pg_effective_io_concurrency }}
 {% endif %}
+{% if _pg_maintenance_io_concurrency and (_pgt_pgver | int) >= 13 %}
+maintenance_io_concurrency = {{ _pg_maintenance_io_concurrency }}
+{% endif %}
 {% if _pg_default_statistics_target %}
 default_statistics_target = {{ _pg_default_statistics_target }}
+{% endif %}
+{% if _pg_jit and (_pgt_pgver | int) >= 12 %}
+jit = {{ _pg_jit }}
+{% endif %}
+{% if _pg_huge_pages %}
+huge_pages = {{ _pg_huge_pages }}
+{% endif %}
+{% if _pg_track_io_timing %}
+track_io_timing = {{ _pg_track_io_timing }}
+{% endif %}
+
+# -- Background writer -------------------------------------------------------
+{% if _pg_bgwriter_lru_maxpages %}
+bgwriter_lru_maxpages = {{ _pg_bgwriter_lru_maxpages }}
+{% endif %}
+{% if _pg_bgwriter_delay %}
+bgwriter_delay = {{ _pg_bgwriter_delay }}
+{% endif %}
+
+# -- Autovacuum --------------------------------------------------------------
+{% if _pg_autovacuum_vacuum_cost_limit %}
+autovacuum_vacuum_cost_limit = {{ _pg_autovacuum_vacuum_cost_limit }}
+{% endif %}
+{% if _pg_autovacuum_naptime %}
+autovacuum_naptime = {{ _pg_autovacuum_naptime }}
+{% endif %}
+{% if _pg_log_autovacuum_min_duration %}
+log_autovacuum_min_duration = {{ _pg_log_autovacuum_min_duration }}
+{% endif %}
+
+# -- Sessions / replicas -----------------------------------------------------
+{% if _pg_idle_in_transaction_session_timeout %}
+idle_in_transaction_session_timeout = {{ _pg_idle_in_transaction_session_timeout }}
+{% endif %}
+{% if _pg_hot_standby_feedback %}
+hot_standby_feedback = {{ _pg_hot_standby_feedback }}
 {% endif %}
 
 # -- Parallelism -------------------------------------------------------------
@@ -84,3 +129,11 @@ timezone = 'UTC'
 # -- Misc --------------------------------------------------------------------
 datestyle = 'iso, mdy'
 default_text_search_config = 'pg_catalog.english'
+
+# -- Experimental (opt-in via postgresql_experimental_enabled) ---------------
+{% for slug in (postgresql_experimental_enabled | default([])) -%}
+{%- set rec = (_pg_experimental_recommendations | default({})).get(slug) -%}
+{%- if rec and (_pgt_pgver | int) >= rec.applies_when_pg_min %}
+{{ slug }} = {{ rec.value }}
+{%- endif %}
+{% endfor %}
