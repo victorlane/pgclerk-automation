@@ -80,7 +80,7 @@ module "etcd" {
 output "pg_hosts" {
   description = "PG + etcd nodes flattened into one list for jit-seed; the `role` field tells them apart."
   value = concat(
-    [for n in module.pg :   { hostname = n.hostname, ip = n.public_ip, role = n.role }],
+    [for n in module.pg : { hostname = n.hostname, ip = n.public_ip, role = n.role }],
     [for n in module.etcd : { hostname = n.hostname, ip = n.public_ip, role = n.role }]
   )
 }

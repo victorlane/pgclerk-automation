@@ -10,9 +10,9 @@ terraform {
   backend "s3" {
     # State key is overridden per-cluster via -backend-config=key=...
     # in the dispatch wrapper. Bucket + region are static.
-    bucket = "pgclerk-tf-state-eu-west-3"
-    key    = "default.tfstate"
-    region = "eu-west-3"
+    bucket         = "pgclerk-tf-state-eu-west-3"
+    key            = "default.tfstate"
+    region         = "eu-west-3"
     encrypt        = true
     dynamodb_table = "pgclerk-tf-locks"
   }

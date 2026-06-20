@@ -71,11 +71,11 @@ locals {
         sudo: ALL=(ALL) NOPASSWD:ALL
         groups: wheel,sudo
         ssh_authorized_keys:
-        %{for k in var.extra_ssh_keys ~}
+        %{for k in var.extra_ssh_keys~}
           - ${jsonencode(k)}
-        %{endfor ~}
+        %{endfor~}
     runcmd:
-    %{for u in var.extra_ssh_users ~}
+    %{for u in var.extra_ssh_users~}
       - |
         if id -u ${u} >/dev/null 2>&1; then
           home=$(getent passwd ${u} | cut -d: -f6)
@@ -86,7 +86,7 @@ locals {
           grep -qxF ${jsonencode(var.base_ssh_public_key)} $home/.ssh/authorized_keys || echo ${jsonencode(var.base_ssh_public_key)} >> $home/.ssh/authorized_keys
           chown -R ${u}:${u} $home/.ssh 2>/dev/null || true
         fi
-    %{endfor ~}
+    %{endfor~}
   EOT
 }
 
@@ -165,8 +165,8 @@ resource "azurerm_virtual_machine_data_disk_attachment" "data" {
   caching            = "ReadWrite"
 }
 
-output "id"         { value = azurerm_linux_virtual_machine.this.id }
-output "hostname"   { value = azurerm_linux_virtual_machine.this.name }
-output "public_ip"  { value = azurerm_public_ip.this.ip_address }
+output "id" { value = azurerm_linux_virtual_machine.this.id }
+output "hostname" { value = azurerm_linux_virtual_machine.this.name }
+output "public_ip" { value = azurerm_public_ip.this.ip_address }
 output "private_ip" { value = azurerm_linux_virtual_machine.this.private_ip_address }
-output "role"       { value = var.role }
+output "role" { value = var.role }

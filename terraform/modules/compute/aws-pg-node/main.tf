@@ -15,12 +15,12 @@ terraform {
   }
 }
 
-variable "name"              { type = string }
-variable "subnet_id"          { type = string }
-variable "security_group_id"  { type = string }
-variable "instance_type"      { type = string }
-variable "key_name"           { type = string }
-variable "role"               { type = string }
+variable "name" { type = string }
+variable "subnet_id" { type = string }
+variable "security_group_id" { type = string }
+variable "instance_type" { type = string }
+variable "key_name" { type = string }
+variable "role" { type = string }
 
 variable "data_volume_gib" {
   type    = number
@@ -103,11 +103,11 @@ locals {
         sudo: ALL=(ALL) NOPASSWD:ALL
         groups: wheel,sudo
         ssh_authorized_keys:
-        %{for k in var.extra_ssh_keys ~}
+        %{for k in var.extra_ssh_keys~}
           - ${jsonencode(k)}
-        %{endfor ~}
+        %{endfor~}
     runcmd:
-    %{for u in var.extra_ssh_users ~}
+    %{for u in var.extra_ssh_users~}
       - |
         if id -u ${u} >/dev/null 2>&1; then
           home=$(getent passwd ${u} | cut -d: -f6)
@@ -118,7 +118,7 @@ locals {
           grep -qxF ${jsonencode(var.base_ssh_public_key)} $home/.ssh/authorized_keys || echo ${jsonencode(var.base_ssh_public_key)} >> $home/.ssh/authorized_keys
           chown -R ${u}:${u} $home/.ssh 2>/dev/null || true
         fi
-    %{endfor ~}
+    %{endfor~}
   EOT
 }
 
@@ -156,14 +156,14 @@ resource "aws_instance" "this" {
   }
 
   tags = merge(var.tags, {
-    Name             = var.name
-    "pgclerk:role"   = var.role
+    Name               = var.name
+    "pgclerk:role"     = var.role
     "pgclerk:hostname" = var.name
   })
 }
 
-output "id"           { value = aws_instance.this.id }
-output "private_ip"   { value = aws_instance.this.private_ip }
-output "public_ip"    { value = aws_instance.this.public_ip }
-output "hostname"     { value = var.name }
-output "role"         { value = var.role }
+output "id" { value = aws_instance.this.id }
+output "private_ip" { value = aws_instance.this.private_ip }
+output "public_ip" { value = aws_instance.this.public_ip }
+output "hostname" { value = var.name }
+output "role" { value = var.role }

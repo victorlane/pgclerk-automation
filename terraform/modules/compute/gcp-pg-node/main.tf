@@ -67,11 +67,11 @@ locals {
         sudo: ALL=(ALL) NOPASSWD:ALL
         groups: wheel,sudo
         ssh_authorized_keys:
-        %{for k in var.extra_ssh_keys ~}
+        %{for k in var.extra_ssh_keys~}
           - ${jsonencode(k)}
-        %{endfor ~}
+        %{endfor~}
     runcmd:
-    %{for u in var.extra_ssh_users ~}
+    %{for u in var.extra_ssh_users~}
       - |
         if id -u ${u} >/dev/null 2>&1; then
           home=$(getent passwd ${u} | cut -d: -f6)
@@ -82,7 +82,7 @@ locals {
           grep -qxF ${jsonencode(var.base_ssh_public_key)} $home/.ssh/authorized_keys || echo ${jsonencode(var.base_ssh_public_key)} >> $home/.ssh/authorized_keys
           chown -R ${u}:${u} $home/.ssh 2>/dev/null || true
         fi
-    %{endfor ~}
+    %{endfor~}
   EOT
 }
 
@@ -144,8 +144,8 @@ resource "google_compute_disk" "data" {
   size = var.data_volume_gib
 }
 
-output "id"         { value = google_compute_instance.this.id }
-output "hostname"   { value = google_compute_instance.this.name }
+output "id" { value = google_compute_instance.this.id }
+output "hostname" { value = google_compute_instance.this.name }
 output "private_ip" { value = google_compute_instance.this.network_interface[0].network_ip }
-output "public_ip"  { value = google_compute_instance.this.network_interface[0].access_config[0].nat_ip }
-output "role"       { value = var.role }
+output "public_ip" { value = google_compute_instance.this.network_interface[0].access_config[0].nat_ip }
+output "role" { value = var.role }

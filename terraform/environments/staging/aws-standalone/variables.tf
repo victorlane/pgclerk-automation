@@ -51,13 +51,13 @@ variable "pg_count" {
 }
 
 variable "pg_instance_type" {
-  type        = string
-  default     = "t3.medium"
+  type    = string
+  default = "t3.medium"
 }
 
 variable "pg_data_volume_size" {
-  type        = number
-  default     = 20
+  type    = number
+  default = 20
 }
 
 # Admin SSH keys propagated to every standard user on the PG host

@@ -127,6 +127,6 @@ resource "aws_security_group" "pg" {
   tags = merge(var.tags, { Name = "${var.name}-pg-sg" })
 }
 
-output "vpc_id"     { value = aws_vpc.this.id }
+output "vpc_id" { value = aws_vpc.this.id }
 output "subnet_ids" { value = [for s in aws_subnet.public : s.id] }
-output "pg_sg_id"   { value = aws_security_group.pg.id }
+output "pg_sg_id" { value = aws_security_group.pg.id }
