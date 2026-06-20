@@ -1,0 +1,11 @@
+---
+# List of mounts. Each item:
+#   { src, path, fstype, opts (default 'defaults'), state (default 'mounted'),
+#     dump (default 0), passno (default 0),
+#     owner, group, mode  (applied to the mount point) }
+mounts: []
+
+# Default mount-point ownership when not specified per-mount.
+mount_default_owner: root
+mount_default_group: root
+mount_default_mode: "0755"

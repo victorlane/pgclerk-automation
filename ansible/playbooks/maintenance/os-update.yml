@@ -1,17 +1,34 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         os-update
-# title:       OS · package updates
-# category:    maintenance
-# surface:     linux
-# destructive: False
+# On-demand OS package update. Usage:
+#
+#   ansible-playbook playbooks/maintenance/os-update.yml \
+#     -e updates_apply=security -e updates_reboot=true \
+#     --limit postgres_replicas
+#
+# Always limit by group/host -- a primary update will trigger failover when
+# Patroni is in use. Run replicas first, then switch over and update the
+# former primary.
 
-- name: "OS · package updates"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
-  gather_facts: false
+- name: Apply OS updates on the limited host set
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    updates_apply: security
+    updates_reboot: false
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'os-update'"
-          - "Replace ansible/playbooks/maintenance/os-update.yml with the real playbook."
+  - name: Refuse to run without an explicit --limit
+    ansible.builtin.assert:
+      that: ansible_limit is defined
+      fail_msg: >-
+        Refusing to run os-update against the entire inventory. Re-run with
+        --limit postgres_replicas (or a more specific selector).
+
+  - name: Resolve OS family slug
+    ansible.builtin.set_fact:
+      _os_family_slug: "{{ ansible_facts['os_family'] | lower | replace('redhat', 'rhel') }}"
+
+  - name: Invoke the family-specific updates role in run-now mode
+    ansible.builtin.include_role:
+      name: "os_{{ _os_family_slug }}_updates"
+      tasks_from: run-now

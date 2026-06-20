@@ -1,0 +1,22 @@
+---
+# How long an apt cache may be considered fresh before a refresh is forced.
+# Set to 0 to always refresh.
+packages_apt_cache_valid_time: 3600
+
+# Common package set. Override with a full list to replace, or use
+# packages_extra to append.
+packages_common:
+- bash-completion
+- vim
+- tar
+- unzip
+- jq
+- python3-pip
+- lsof
+- tcpdump
+- dnsutils
+
+# Site- or caller-specific additions. Intended to be set by another role
+# that includes this one (`include_role` / `import_role`) to declare extra
+# package needs without owning the install plumbing.
+packages_extra: []

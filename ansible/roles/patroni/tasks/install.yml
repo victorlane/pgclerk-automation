@@ -1,0 +1,64 @@
+---
+# Per-OS step: pip + venv tooling. The venv itself is built the same way
+# on every family, so only the package install differs.
+- name: Install Python tooling for the Patroni venv
+  ansible.builtin.include_tasks: "install-packages-{{ _pg_os_variant }}.yml"
+
+- name: Create Patroni virtualenv parent directory
+  ansible.builtin.file:
+    path: "{{ patroni_venv | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Patroni 3.x imports psycopg/psycopg2 at module-load time in
+# patroni.postgresql; without one of them in the venv, both `patroni`
+# and `patronictl` crash with ModuleNotFoundError on every invocation.
+# The `etcd3` extra only pulls the etcd client, not psycopg.  Add
+# psycopg2-binary explicitly -- Patroni's docs list it as the supported
+# driver (psycopg2-binary ships compiled wheels so no libpq-dev needed).
+# The system python3-psycopg2 RPM lives outside the venv and is
+# invisible unless we built the venv with --system-site-packages.
+- name: Install Patroni into a dedicated virtualenv
+  ansible.builtin.pip:
+    name:
+    - "patroni[etcd3]=={{ patroni_version }}"
+    - "psycopg2-binary"
+    virtualenv: "{{ patroni_venv }}"
+    virtualenv_command: /usr/bin/python3 -m venv
+    state: present
+
+# Symlinks so operators can run `patronictl ...` without sourcing the venv.
+# /usr/local/bin keeps us out of distro-managed paths.
+- name: Symlink patroni binary into /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ patroni_venv }}/bin/patroni"
+    dest: /usr/local/bin/patroni
+    state: link
+    force: true
+
+- name: Symlink patronictl binary into /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ patroni_venv }}/bin/patronictl"
+    dest: /usr/local/bin/patronictl
+    state: link
+    force: true
+
+- name: Create /etc/patroni
+  ansible.builtin.file:
+    path: /etc/patroni
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# postgres:postgres because Patroni runs as postgres and writes its own log
+# files here; 0750 keeps the world out of pg_log-like content.
+- name: Create /var/log/patroni
+  ansible.builtin.file:
+    path: /var/log/patroni
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"

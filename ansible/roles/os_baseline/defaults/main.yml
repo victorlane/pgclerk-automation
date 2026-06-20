@@ -1,0 +1,13 @@
+---
+# Pass-throughs for the underlying per-family roles. The wrapper renames them
+# with the os_baseline_ prefix so the consumer's play only needs to think
+# about one set of variables.
+os_baseline_packages_extra: []
+os_baseline_firewall_rules: []
+os_baseline_firewall_services: []
+os_baseline_selinux_fcontexts: []
+os_baseline_selinux_booleans: {}
+# CIDRs allowed to ssh as the postgres user (otherwise denied entirely
+# when baseline_lock_postgres_login is true).  Used by pgBackRest
+# topologies where the backup server SSHes to PG nodes and vice versa.
+os_baseline_allow_postgres_from: []

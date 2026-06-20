@@ -1,0 +1,32 @@
+---
+- name: Install nfs-common when any NFS mount is declared
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: mounts | selectattr('fstype', 'match', '^nfs') | list | length > 0
+
+- name: Ensure mount-point directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default(mount_default_owner) }}"
+    group: "{{ item.group | default(mount_default_group) }}"
+    mode: "{{ item.mode | default(mount_default_mode) }}"
+  loop: "{{ mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Apply mounts
+  ansible.posix.mount:
+    src: "{{ item.src }}"
+    path: "{{ item.path }}"
+    fstype: "{{ item.fstype }}"
+    opts: "{{ item.opts | default('defaults') }}"
+    state: "{{ item.state | default('mounted') }}"
+    dump: "{{ item.dump | default(0) }}"
+    passno: "{{ item.passno | default(0) }}"
+  loop: "{{ mounts }}"
+  loop_control:
+    label: "{{ item.src }} -> {{ item.path }} ({{ item.fstype }})"

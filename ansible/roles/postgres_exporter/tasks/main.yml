@@ -1,0 +1,39 @@
+---
+- name: Assert supported OS
+  ansible.builtin.assert:
+    that:
+    - ansible_facts['os_family'] in ['RedHat', 'Debian']
+      or ansible_facts['distribution'] == 'Amazon'
+    fail_msg: >-
+      The postgres_exporter role supports RedHat, Debian, and Amazon Linux;
+      got distribution='{{ ansible_facts['distribution'] }}',
+      os_family='{{ ansible_facts['os_family'] }}'.
+
+- name: Assert exporter password is set
+  ansible.builtin.assert:
+    that:
+    - postgres_exporter_password is string
+    - postgres_exporter_password | length > 0
+    fail_msg: >-
+      postgres_exporter_password must be a non-empty string. Override the
+      default 'changeme-exporter' via group_vars or -e @secrets.yml.
+
+# Mirror the postgresql role's dispatch: Amazon Linux reports os_family=RedHat
+# but ships no postgres_exporter package, so we treat it as its own variant.
+- name: Determine OS install variant
+  ansible.builtin.set_fact:
+    _pg_os_variant: >-
+      {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+         else ansible_facts['os_family'] }}
+
+- name: Load OS-specific variables
+  ansible.builtin.include_vars: "{{ _pg_os_variant }}.yml"
+
+- name: Install postgres_exporter
+  ansible.builtin.include_tasks: "install-{{ _pg_os_variant }}.yml"
+
+- name: Create exporter SQL role in PostgreSQL
+  ansible.builtin.include_tasks: sql_role.yml
+
+- name: Configure exporter service
+  ansible.builtin.include_tasks: configure.yml

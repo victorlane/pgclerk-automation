@@ -1,0 +1,24 @@
+---
+- name: Apply timezone
+  ansible.builtin.import_tasks: timezone.yml
+
+- name: Configure chrony / NTP
+  ansible.builtin.import_tasks: chrony.yml
+
+- name: Apply sysctl tuning
+  ansible.builtin.import_tasks: sysctl.yml
+
+- name: Apply security limits
+  ansible.builtin.import_tasks: limits.yml
+
+- name: Disable transparent huge pages
+  ansible.builtin.import_tasks: thp.yml
+  when: baseline_disable_thp | bool
+
+- name: Manage /etc/hosts entry for this host
+  ansible.builtin.import_tasks: hosts.yml
+  when: baseline_manage_hosts | bool
+
+- name: Apply host hardening (SSH priority, PG cgroup isolation, sshd config)
+  ansible.builtin.import_tasks: hardening.yml
+  when: baseline_apply_hardening | bool

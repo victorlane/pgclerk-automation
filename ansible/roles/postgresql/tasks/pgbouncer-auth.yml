@@ -1,0 +1,70 @@
+---
+# Install the pgbouncer auth helper -- the SECURITY DEFINER function that
+# pgbouncer's auth_user invokes to read SCRAM hashes from pg_shadow on
+# behalf of unknown client users.
+#
+# Why this lives in the postgresql role (not pgbouncer): the function and
+# its grantee role are PG-side objects. The pgbouncer role only knows
+# the auth_user *name* via pgbouncer_databases[*].auth_user; it has no
+# DB connection to the backend cluster and shouldn't acquire one just
+# for this.
+#
+# Why every customer DB, not template1: pgbouncer connects to the
+# specific dbname listed in [databases]. The function must exist in
+# whichever DB the auth_user lands in when pgbouncer calls it -- and
+# that is per-database, not the template. Installing into template1
+# would only help future databases cloned from it; existing databases
+# would still fail until re-cloned. So we install into every entry of
+# postgresql_databases that is present-state.
+
+- name: Assert pgbouncer auth helper password is supplied
+  ansible.builtin.assert:
+    that:
+    - postgresql_pgbouncer_auth_password is defined
+    - postgresql_pgbouncer_auth_password | length > 0
+    fail_msg: >-
+      postgresql_pgbouncer_install_auth_helper is true (pgbouncer is in
+      inventory), so the SQL role '{{ postgresql_pgbouncer_auth_user }}'
+      needs a password via postgresql_pgbouncer_auth_password. Supply it
+      via -e @secrets.yml or a vault file.
+
+# The auth_user role itself. CREATE-or-update via the postgresql_user
+# module; LOGIN attribute so pgbouncer can authenticate as it. No
+# additional privileges -- the SECURITY DEFINER function is how it
+# reads pg_shadow.
+- name: Ensure pgbouncer auth SQL role exists
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ postgresql_pgbouncer_auth_user }}"
+    password: "{{ postgresql_pgbouncer_auth_password }}"
+    role_attr_flags: LOGIN
+    state: present
+  no_log: true
+
+# The function itself. CREATE OR REPLACE makes the task idempotent
+# without a separate check. The REVOKE-from-PUBLIC + GRANT-to-auth_user
+# pattern is from the upstream pgbouncer docs and is what makes
+# SECURITY DEFINER safe here: only the named role can read pg_shadow
+# via this function, not any random session.
+- name: Install pgbouncer_get_auth(text) SECURITY DEFINER function
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ item.name }}"
+    query: |
+      CREATE OR REPLACE FUNCTION public.pgbouncer_get_auth(p_usename TEXT)
+      RETURNS TABLE(username TEXT, password TEXT) AS $$
+      BEGIN
+          RAISE WARNING 'PgBouncer auth request: %', p_usename;
+          RETURN QUERY SELECT usename::TEXT, passwd::TEXT
+                       FROM pg_catalog.pg_shadow
+                       WHERE usename = p_usename;
+      END;
+      $$ LANGUAGE plpgsql SECURITY DEFINER;
+      REVOKE ALL ON FUNCTION public.pgbouncer_get_auth(p_usename TEXT) FROM PUBLIC;
+      GRANT EXECUTE ON FUNCTION public.pgbouncer_get_auth(p_usename TEXT) TO {{ postgresql_pgbouncer_auth_user }};
+  loop: "{{ postgresql_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.state | default('present') == 'present'

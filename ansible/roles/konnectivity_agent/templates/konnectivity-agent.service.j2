@@ -1,0 +1,34 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=pgclerk Konnectivity agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ konnectivity_user }}
+Group={{ konnectivity_group }}
+EnvironmentFile={{ konnectivity_conf_dir }}/env
+ExecStart={{ konnectivity_bin_path }}
+Restart=on-failure
+RestartSec=5s
+
+# Hardening -- mirrors packaging/systemd/konnectivity-agent.service in the
+# pgclerk-konnectivity repo. Update both in lockstep.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths={{ konnectivity_conf_dir }} {{ konnectivity_home }}
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+
+[Install]
+WantedBy=multi-user.target

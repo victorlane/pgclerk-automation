@@ -1,17 +1,88 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         managed-aws-aurora
-# title:       AWS Aurora · provision
-# category:    managed
-# surface:     aws
-# destructive: False
-
-- name: "AWS Aurora · provision"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+# Managed PG on AWS via Aurora Postgres. The operator drives shape via
+# extra-vars from the cluster wizard. Cluster-level + per-instance vars
+# overlap deliberately with managed-aws-rds.yml so the same intake form
+# can target either offering, with Aurora-specific knobs added on top:
+#   db_engine_version                # e.g. 16.4 (family derived as aurora-postgresql<major>)
+#   db_master_username, db_master_password (vaulted)
+#   db_vpc_security_group_ids: [ ... ]
+#   db_subnet_group: <name>
+#   db_kms_key_id (optional)
+#   db_backup_retention_days
+#   db_deletion_protection (bool)
+#   db_performance_insights_enabled (bool)
+#   db_availability_zones: [ ... ]   # multi_az -> AZ list for Aurora
+#   db_writer_instance_class         # e.g. db.r6g.large
+#   db_reader_instance_classes: [ ... ]  # one entry per reader; [] = writer only
+#   db_serverless_v2_min_capacity    # ACUs; null = provisioned writer
+#   db_serverless_v2_max_capacity    # ACUs
+#   db_global_cluster_identifier     # optional; joins an Aurora Global cluster
+# This runs on `localhost` because AWS API calls don't target a managed host.
+- name: Provision Aurora Postgres cluster
+  hosts: localhost
   gather_facts: false
+  vars:
+    db_engine_version: "{{ db_engine_version | default('16.4') }}"
+    db_writer_instance_class: "{{ db_writer_instance_class | default('db.r6g.large') }}"
+    db_reader_instance_classes: "{{ db_reader_instance_classes | default([]) }}"
+    db_backup_retention_days: "{{ db_backup_retention_days | default(14) }}"
+    db_deletion_protection: "{{ db_deletion_protection | default(true) }}"
+    db_performance_insights_enabled: "{{ db_performance_insights_enabled | default(true) }}"
+    db_serverless_v2_min_capacity: "{{ db_serverless_v2_min_capacity | default(omit) }}"
+    db_serverless_v2_max_capacity: "{{ db_serverless_v2_max_capacity | default(omit) }}"
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'managed-aws-aurora'"
-          - "Replace ansible/playbooks/managed/aws-aurora.yml with the real playbook."
+    # Aurora == cluster + 1..N cluster_instances. The cluster owns storage and
+    # endpoints; instances are stateless compute. Order matters: cluster first,
+    # then the writer, then readers (each as its own cluster_instance task).
+    - name: Create Aurora Postgres cluster
+      amazon.aws.rds_cluster:
+        cluster_id: "{{ db_identifier }}"
+        engine: aurora-postgresql
+        engine_version: "{{ db_engine_version }}"
+        master_username: "{{ db_master_username }}"
+        master_user_password: "{{ db_master_password }}"
+        vpc_security_group_ids: "{{ db_vpc_security_group_ids | default([]) }}"
+        db_subnet_group_name: "{{ db_subnet_group | default(omit) }}"
+        kms_key_id: "{{ db_kms_key_id | default(omit) }}"
+        storage_encrypted: true
+        backup_retention_period: "{{ db_backup_retention_days }}"
+        deletion_protection: "{{ db_deletion_protection }}"
+        availability_zones: "{{ db_availability_zones | default(omit) }}"
+        # Serverless v2 knobs collapse to omit when not set, so a provisioned
+        # writer (writer_instance_class on the cluster_instance below) is used.
+        serverlessv2_scaling_configuration:
+          min_capacity: "{{ db_serverless_v2_min_capacity }}"
+          max_capacity: "{{ db_serverless_v2_max_capacity }}"
+        global_cluster_identifier: "{{ db_global_cluster_identifier | default(omit) }}"
+        state: present
+        wait: true
+      register: aurora_cluster
+
+    - name: Create Aurora writer instance
+      amazon.aws.rds_instance:
+        id: "{{ db_identifier }}-writer"
+        cluster_id: "{{ db_identifier }}"
+        engine: aurora-postgresql
+        instance_class: "{{ db_writer_instance_class }}"
+        publicly_accessible: false
+        performance_insights_enabled: "{{ db_performance_insights_enabled }}"
+        state: present
+        wait: true
+      register: aurora_writer
+
+    # Readers are optional. Index is used to keep instance ids stable across runs.
+    - name: Create Aurora reader instances
+      amazon.aws.rds_instance:
+        id: "{{ db_identifier }}-reader-{{ idx }}"
+        cluster_id: "{{ db_identifier }}"
+        engine: aurora-postgresql
+        instance_class: "{{ item }}"
+        publicly_accessible: false
+        performance_insights_enabled: "{{ db_performance_insights_enabled }}"
+        state: present
+        wait: true
+      loop: "{{ db_reader_instance_classes }}"
+      loop_control:
+        index_var: idx
+      when: db_reader_instance_classes | length > 0
+      register: aurora_readers

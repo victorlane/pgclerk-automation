@@ -1,0 +1,8 @@
+---
+# AppArmor is the default LSM on Debian-family hosts, not SELinux. This role
+# is intentionally a no-op so the os_baseline wrapper can include it
+# unconditionally. Variables are kept for shape parity with os_rhel_selinux
+# but are not consumed here.
+selinux_state: ""
+selinux_fcontexts: []
+selinux_booleans: {}

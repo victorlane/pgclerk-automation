@@ -1,0 +1,37 @@
+---
+# Pre-create the per-user Ansible tmp dir for postgres so the first become
+# drop doesn't trigger the "remote_tmp ... did not exist and was created with
+# a mode of 0700" warning. Matches ansible.cfg's remote_tmp.
+- name: Pre-create Ansible tmp dir for postgres become_user
+  ansible.builtin.file:
+    path: /tmp/.ansible-postgres/tmp
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+
+# pg_monitor (PG10+) covers replication lag, pg_stat_activity, bgwriter, and
+# the standard server stat views. pg_read_all_stats adds per-table and
+# per-index counters that some collectors need. We grant both so the
+# exporter has full coverage without needing superuser.
+- name: Ensure exporter SQL role exists
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ postgres_exporter_sql_role }}"
+    password: "{{ postgres_exporter_password }}"
+    encrypted: true
+    role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE,INHERIT
+    state: present
+  no_log: true
+
+- name: Grant pg_monitor and pg_read_all_stats to exporter role
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_membership:
+    source_role: "{{ item }}"
+    target_role: "{{ postgres_exporter_sql_role }}"
+    state: present
+  loop:
+  - pg_monitor
+  - pg_read_all_stats

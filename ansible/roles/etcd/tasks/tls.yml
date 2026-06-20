@@ -1,0 +1,268 @@
+---
+# TLS bootstrap for etcd.
+#
+# Generates (or accepts a caller-supplied) CA, then issues per-node server,
+# peer, and client certificates. All PKI material that needs to survive
+# between role invocations lives under etcd_tls_local_pki_dir on the
+# controller; only the leaf material is shipped to /etc/etcd/tls.
+#
+# Crypto primitives come from community.crypto. Adds a dependency line
+# in requirements.yml.
+
+- name: Assert community.crypto collection is available
+  ansible.builtin.command:
+    cmd: ansible-galaxy collection list community.crypto
+  delegate_to: localhost
+  run_once: true
+  become: false
+  register: _etcd_tls_crypto_check
+  changed_when: false
+  failed_when: _etcd_tls_crypto_check.rc != 0
+
+# --------------------------------------------------------------------------
+# CA: caller-supplied OR persisted-on-controller.
+# --------------------------------------------------------------------------
+
+- name: Set caller-supplied-CA flag
+  ansible.builtin.set_fact:
+    _etcd_tls_ca_supplied: "{{ (etcd_tls_ca_cert | length > 0) and (etcd_tls_ca_key | length > 0) }}"
+
+- name: Ensure controller PKI directory exists
+  ansible.builtin.file:
+    path: "{{ etcd_tls_local_pki_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+  become: false
+  when: not _etcd_tls_ca_supplied
+
+- name: Resolve effective CA paths on the controller
+  ansible.builtin.set_fact:
+    _etcd_tls_ca_cert_path: "{{ etcd_tls_ca_cert if _etcd_tls_ca_supplied else (etcd_tls_local_pki_dir ~ '/ca.crt') }}"
+    _etcd_tls_ca_key_path:  "{{ etcd_tls_ca_key  if _etcd_tls_ca_supplied else (etcd_tls_local_pki_dir ~ '/ca.key') }}"
+
+- name: Generate CA private key (controller, persisted)
+  community.crypto.openssl_privatekey:
+    path: "{{ _etcd_tls_ca_key_path }}"
+    size: 4096
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  become: false
+  when: not _etcd_tls_ca_supplied
+
+- name: Generate CA CSR (controller)
+  community.crypto.openssl_csr:
+    path: "{{ etcd_tls_local_pki_dir }}/ca.csr"
+    privatekey_path: "{{ _etcd_tls_ca_key_path }}"
+    common_name: "{{ etcd_tls_ca_common_name }}"
+    organization_name: "{{ etcd_tls_ca_organisation }}"
+    basic_constraints:
+    - "CA:TRUE"
+    basic_constraints_critical: true
+    key_usage:
+    - keyCertSign
+    - cRLSign
+    key_usage_critical: true
+  delegate_to: localhost
+  run_once: true
+  become: false
+  when: not _etcd_tls_ca_supplied
+
+- name: Self-sign the CA certificate (controller)
+  community.crypto.x509_certificate:
+    path: "{{ _etcd_tls_ca_cert_path }}"
+    privatekey_path: "{{ _etcd_tls_ca_key_path }}"
+    csr_path: "{{ etcd_tls_local_pki_dir }}/ca.csr"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ etcd_tls_ca_days }}d"
+  delegate_to: localhost
+  run_once: true
+  become: false
+  when: not _etcd_tls_ca_supplied
+
+# --------------------------------------------------------------------------
+# Per-node server + peer + client certificates.
+# Generated on the controller (so the CA key never leaves it) and shipped
+# to each node.
+# --------------------------------------------------------------------------
+
+- name: Compute SAN list for this etcd node
+  ansible.builtin.set_fact:
+    _etcd_tls_sans: >-
+      {{ [
+           'DNS:' ~ inventory_hostname,
+           'DNS:localhost',
+           'IP:' ~ etcd_advertise_ip,
+           'IP:' ~ etcd_listen_ip,
+           'IP:127.0.0.1'
+         ] | unique | list }}
+
+- name: Generate per-node server key (controller)
+  community.crypto.openssl_privatekey:
+    path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-server.key"
+    size: 4096
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+
+- name: Generate per-node server CSR (controller)
+  community.crypto.openssl_csr:
+    path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-server.csr"
+    privatekey_path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-server.key"
+    common_name: "etcd-{{ inventory_hostname }}"
+    organization_name: "{{ etcd_tls_ca_organisation }}"
+    subject_alt_name: "{{ _etcd_tls_sans }}"
+    extended_key_usage:
+    - serverAuth
+    - clientAuth
+    key_usage:
+    - digitalSignature
+    - keyEncipherment
+  delegate_to: localhost
+  become: false
+
+- name: Sign per-node server certificate (controller)
+  community.crypto.x509_certificate:
+    path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-server.crt"
+    csr_path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-server.csr"
+    ownca_path: "{{ _etcd_tls_ca_cert_path }}"
+    ownca_privatekey_path: "{{ _etcd_tls_ca_key_path }}"
+    provider: ownca
+    ownca_not_after: "+{{ etcd_tls_cert_days }}d"
+  delegate_to: localhost
+  become: false
+
+- name: Generate per-node peer key (controller)
+  community.crypto.openssl_privatekey:
+    path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-peer.key"
+    size: 4096
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+
+- name: Generate per-node peer CSR (controller)
+  community.crypto.openssl_csr:
+    path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-peer.csr"
+    privatekey_path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-peer.key"
+    common_name: "etcd-{{ inventory_hostname }}-peer"
+    organization_name: "{{ etcd_tls_ca_organisation }}"
+    subject_alt_name: "{{ _etcd_tls_sans }}"
+    extended_key_usage:
+    - serverAuth
+    - clientAuth
+    key_usage:
+    - digitalSignature
+    - keyEncipherment
+  delegate_to: localhost
+  become: false
+
+- name: Sign per-node peer certificate (controller)
+  community.crypto.x509_certificate:
+    path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-peer.crt"
+    csr_path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-peer.csr"
+    ownca_path: "{{ _etcd_tls_ca_cert_path }}"
+    ownca_privatekey_path: "{{ _etcd_tls_ca_key_path }}"
+    provider: ownca
+    ownca_not_after: "+{{ etcd_tls_cert_days }}d"
+  delegate_to: localhost
+  become: false
+
+- name: Generate Patroni client key (controller)
+  community.crypto.openssl_privatekey:
+    path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-patroni-client.key"
+    size: 4096
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+
+- name: Generate Patroni client CSR (controller)
+  community.crypto.openssl_csr:
+    path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-patroni-client.csr"
+    privatekey_path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-patroni-client.key"
+    common_name: "patroni-{{ inventory_hostname }}"
+    organization_name: "{{ etcd_tls_ca_organisation }}"
+    extended_key_usage:
+    - clientAuth
+    key_usage:
+    - digitalSignature
+    - keyEncipherment
+  delegate_to: localhost
+  become: false
+
+- name: Sign Patroni client certificate (controller)
+  community.crypto.x509_certificate:
+    path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-patroni-client.crt"
+    csr_path: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-patroni-client.csr"
+    ownca_path: "{{ _etcd_tls_ca_cert_path }}"
+    ownca_privatekey_path: "{{ _etcd_tls_ca_key_path }}"
+    provider: ownca
+    ownca_not_after: "+{{ etcd_tls_cert_days }}d"
+  delegate_to: localhost
+  become: false
+
+# --------------------------------------------------------------------------
+# Distribute leaf material to /etc/etcd/tls on the node.
+# --------------------------------------------------------------------------
+
+- name: Ensure etcd TLS directory exists on the node
+  ansible.builtin.file:
+    path: "{{ etcd_tls_cert_dir }}"
+    state: directory
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "0750"
+
+- name: Copy CA certificate to the node
+  ansible.builtin.copy:
+    src: "{{ _etcd_tls_ca_cert_path }}"
+    dest: "{{ etcd_tls_cert_dir }}/ca.crt"
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "0644"
+  notify: etcd restart
+
+- name: Copy server cert + key to the node
+  ansible.builtin.copy:
+    src: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-{{ item.src }}"
+    dest: "{{ etcd_tls_cert_dir }}/{{ item.dest }}"
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+  - { src: "server.crt", dest: "server.crt", mode: "0644" }
+  - { src: "server.key", dest: "server.key", mode: "0600" }
+  - { src: "peer.crt",   dest: "peer.crt",   mode: "0644" }
+  - { src: "peer.key",   dest: "peer.key",   mode: "0600" }
+  notify: etcd restart
+
+# Patroni client material lands in /etc/patroni/etcd-tls; the patroni role's
+# templates wire it up. We stage it here so the node has it even if the
+# patroni role is invoked later in the same play.
+- name: Ensure Patroni etcd-TLS directory exists
+  ansible.builtin.file:
+    path: /etc/patroni/etcd-tls
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+- name: Copy CA to /etc/patroni/etcd-tls (for Patroni client)
+  ansible.builtin.copy:
+    src: "{{ _etcd_tls_ca_cert_path }}"
+    dest: /etc/patroni/etcd-tls/ca.crt
+    owner: postgres
+    group: postgres
+    mode: "0644"
+
+- name: Copy Patroni client cert + key
+  ansible.builtin.copy:
+    src: "{{ etcd_tls_local_pki_dir }}/{{ inventory_hostname }}-patroni-client.{{ item.ext }}"
+    dest: "/etc/patroni/etcd-tls/client.{{ item.ext }}"
+    owner: postgres
+    group: postgres
+    mode: "{{ item.mode }}"
+  loop:
+  - { ext: "crt", mode: "0644" }
+  - { ext: "key", mode: "0600" }

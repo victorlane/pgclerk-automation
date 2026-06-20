@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  author: pgclerk
+  description: ufw helpers - port + source-CIDR rules and named application profiles.
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: Debian
+    versions:
+    - "11"
+    - "12"
+  - name: Ubuntu
+    versions:
+    - "20.04"
+    - "22.04"
+    - "24.04"
+  galaxy_tags:
+  - firewall
+  - ufw
+  - security
+
+dependencies: []

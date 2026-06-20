@@ -1,0 +1,25 @@
+---
+# manual:    role does nothing on a normal run; updates are applied only
+#            when the consumer includes tasks/run-now.yml from a maintenance
+#            playbook.
+# automatic: installs unattended-upgrades and configures it to apply updates
+#            on a timer.
+updates_mode: manual
+
+# Which scope of updates to apply (used by both modes).
+#   security: security advisories only (Debian-Security origin)
+#   default:  all available updates (Debian-Security + Updates)
+updates_apply: security
+
+# Reboot after applying updates? Honored by unattended-upgrades in `automatic`
+# mode and by run-now.yml in manual mode.
+updates_reboot: false
+
+# Only used in `automatic` mode. Email notification settings for
+# unattended-upgrades.
+updates_email_to: ""
+updates_email_only_on_error: true
+
+# Only used in `automatic` mode. Systemd timer schedule (OnCalendar=) for
+# the apt-daily-upgrade.timer override.
+updates_timer_oncalendar: "daily"

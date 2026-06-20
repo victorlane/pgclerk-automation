@@ -1,0 +1,61 @@
+---
+# python3-libselinux and python3-policycoreutils are present in both EL 8/9
+# and Amazon Linux 2023 main repos, so no Amazon-specific branch is needed.
+- name: Install SELinux Python bindings
+  ansible.builtin.dnf:
+    name:
+    - python3-libselinux
+    - python3-policycoreutils
+    state: present
+
+- name: Set SELinux running and persistent state
+  ansible.posix.selinux:
+    state: "{{ selinux_state }}"
+    policy: targeted
+  when: selinux_state | length > 0
+
+- name: Skip fcontext/boolean work when SELinux is disabled
+  ansible.builtin.meta: end_host
+  when: ansible_facts.selinux.status | default('disabled') == 'disabled'
+
+- name: Apply SELinux booleans
+  ansible.posix.seboolean:
+    name: "{{ item.key }}"
+    state: "{{ item.value | bool }}"
+    persistent: true
+  loop: "{{ selinux_booleans | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+
+- name: Register file contexts
+  community.general.sefcontext:
+    target: "{{ item.target }}"
+    setype: "{{ item.setype }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ selinux_fcontexts }}"
+  loop_control:
+    label: "{{ item.target }} -> {{ item.setype }}"
+  register: selinux_fcontext_results
+
+# Walk the fcontext_results, strip the regex tail off each target to get a
+# concrete directory path, and check whether it exists on disk. A registered
+# fcontext that points at a path which doesn't exist yet is fine -- the
+# label will be applied automatically when the directory is created.
+- name: Probe target directories for restorecon
+  ansible.builtin.stat:
+    path: "{{ item.item.target | regex_replace('\\(.*\\)\\??$', '') }}"
+  loop: "{{ selinux_fcontext_results.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.target }}"
+  when: item is changed
+  register: selinux_fcontext_target_stats
+
+- name: Restore SELinux contexts for changed targets that already exist
+  ansible.builtin.command: "restorecon -Rv {{ item.item.item.target | regex_replace('\\(.*\\)\\??$', '') }}"
+  loop: "{{ selinux_fcontext_target_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.item.target }}"
+  when:
+  - item.stat is defined
+  - item.stat.exists | default(false)
+  changed_when: true

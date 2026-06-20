@@ -1,17 +1,231 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         observability-stack
-# title:       Observability · full stack
-# category:    observability
-# surface:     linux
-# destructive: False
+# Observability stack atom.
+#
+# Stand up a small Prometheus + Alertmanager on a dedicated host so we
+# can scrape the existing postgres_exporter / node_exporter sidecars
+# that the postgresql + os_baseline roles already drop on every managed
+# host. Grafana is intentionally NOT installed here — we use Grafana
+# Cloud or a customer-owned Grafana — but the stack exposes the Prom
+# data source URL the pgclerk UI's observability backends already
+# know how to query.
+#
+# Inputs (extra-vars):
+#   prom_scrape_targets       list of { customer, cluster, address, role }
+#                             where address is "host:9187" for postgres,
+#                             "host:9100" for node.
+#   prom_remote_write_url     optional: forward to Mimir/Grafana Cloud.
+#   prom_remote_write_basic_auth_user / _password   for the remote-write.
+#   alertmanager_slack_webhook    optional Slack target.
+#   alertmanager_pagerduty_key    optional PD routing key.
 
-- name: "Observability · full stack"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
-  gather_facts: false
+- name: Observability · Prometheus + Alertmanager
+  hosts: observability_servers
+  become: true
+  vars:
+    prom_version: "2.55.0"
+    am_version: "0.27.0"
+    prom_data_dir: /var/lib/prometheus
+    am_data_dir: /var/lib/alertmanager
+    prom_user: prometheus
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'observability-stack'"
-          - "Replace ansible/playbooks/observability/observability-stack.yml with the real playbook."
+  - name: Ensure prometheus user
+    ansible.builtin.user:
+      name: "{{ prom_user }}"
+      system: true
+      shell: /usr/sbin/nologin
+      home: "{{ prom_data_dir }}"
+
+  - name: Create data dirs
+    ansible.builtin.file:
+      path: "{{ item }}"
+      state: directory
+      owner: "{{ prom_user }}"
+      group: "{{ prom_user }}"
+      mode: '0750'
+    loop:
+    - "{{ prom_data_dir }}"
+    - "{{ am_data_dir }}"
+    - /etc/prometheus
+    - /etc/alertmanager
+
+  - name: Download Prometheus
+    ansible.builtin.unarchive:
+      src: "https://github.com/prometheus/prometheus/releases/download/v{{ prom_version }}/prometheus-{{ prom_version }}.linux-amd64.tar.gz"
+      dest: /usr/local
+      remote_src: true
+      creates: "/usr/local/prometheus-{{ prom_version }}.linux-amd64"
+
+  - name: Symlink prometheus binary
+    ansible.builtin.file:
+      src: "/usr/local/prometheus-{{ prom_version }}.linux-amd64/{{ item }}"
+      dest: "/usr/local/bin/{{ item }}"
+      state: link
+    loop: [prometheus, promtool]
+
+  - name: Download Alertmanager
+    ansible.builtin.unarchive:
+      src: "https://github.com/prometheus/alertmanager/releases/download/v{{ am_version }}/alertmanager-{{ am_version }}.linux-amd64.tar.gz"
+      dest: /usr/local
+      remote_src: true
+      creates: "/usr/local/alertmanager-{{ am_version }}.linux-amd64"
+
+  - name: Symlink alertmanager binary
+    ansible.builtin.file:
+      src: "/usr/local/alertmanager-{{ am_version }}.linux-amd64/alertmanager"
+      dest: /usr/local/bin/alertmanager
+      state: link
+
+  - name: Render prometheus.yml
+    ansible.builtin.copy:
+      dest: /etc/prometheus/prometheus.yml
+      owner: "{{ prom_user }}"
+      group: "{{ prom_user }}"
+      mode: '0640'
+      content: |
+        global:
+          scrape_interval: 30s
+          evaluation_interval: 30s
+          external_labels:
+            stack: pgclerk
+        alerting:
+          alertmanagers:
+          - static_configs:
+            - targets: ['127.0.0.1:9093']
+        rule_files:
+        - /etc/prometheus/rules/*.yml
+        scrape_configs:
+        - job_name: postgres
+          static_configs:
+        {% for t in (prom_scrape_targets | default([])) %}
+        {% if t.role == 'postgres' %}
+          - targets: ['{{ t.address }}']
+            labels:
+              customer: '{{ t.customer }}'
+              cluster: '{{ t.cluster }}'
+        {% endif %}
+        {% endfor %}
+        - job_name: node
+          static_configs:
+        {% for t in (prom_scrape_targets | default([])) %}
+        {% if t.role == 'node' %}
+          - targets: ['{{ t.address }}']
+            labels:
+              customer: '{{ t.customer }}'
+              cluster: '{{ t.cluster }}'
+        {% endif %}
+        {% endfor %}
+        {% if prom_remote_write_url is defined and prom_remote_write_url %}
+        remote_write:
+        - url: '{{ prom_remote_write_url }}'
+          basic_auth:
+            username: '{{ prom_remote_write_basic_auth_user | default("") }}'
+            password: '{{ prom_remote_write_basic_auth_password | default("") }}'
+          write_relabel_configs:
+          - source_labels: [__name__]
+            regex: pg_.*|node_.*|patroni_.*
+            action: keep
+        {% endif %}
+
+  - name: Drop default alert rules
+    ansible.builtin.copy:
+      dest: /etc/prometheus/rules/pgclerk.yml
+      owner: "{{ prom_user }}"
+      group: "{{ prom_user }}"
+      mode: '0640'
+      content: |
+        groups:
+        - name: pgclerk.postgres
+          rules:
+          - alert: PostgresDown
+            expr: pg_up == 0
+            for: 2m
+            labels: { severity: critical }
+            annotations:
+              summary: 'Postgres {% raw %}{{ $labels.cluster }}{% endraw %} is down'
+          - alert: ReplicationLagHigh
+            expr: pg_replication_lag_bytes > 200000000
+            for: 5m
+            labels: { severity: warning }
+            annotations:
+              summary: 'Replication lag > 200MB on {% raw %}{{ $labels.cluster }}{% endraw %}'
+          - alert: BackupAgeHigh
+            expr: time() - pg_backup_last_completed_seconds > 90000
+            for: 10m
+            labels: { severity: warning }
+            annotations:
+              summary: 'No successful backup in >25h on {% raw %}{{ $labels.cluster }}{% endraw %}'
+
+  - name: Render alertmanager.yml
+    ansible.builtin.copy:
+      dest: /etc/alertmanager/alertmanager.yml
+      owner: "{{ prom_user }}"
+      group: "{{ prom_user }}"
+      mode: '0640'
+      content: |
+        route:
+          receiver: pgclerk-default
+          group_by: ['alertname','customer','cluster']
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 12h
+        receivers:
+        - name: pgclerk-default
+          {% if alertmanager_slack_webhook is defined and alertmanager_slack_webhook %}
+          slack_configs:
+          - api_url: '{{ alertmanager_slack_webhook }}'
+            channel: '#pgclerk-alerts'
+            send_resolved: true
+          {% endif %}
+          {% if alertmanager_pagerduty_key is defined and alertmanager_pagerduty_key %}
+          pagerduty_configs:
+          - routing_key: '{{ alertmanager_pagerduty_key }}'
+            send_resolved: true
+          {% endif %}
+          webhook_configs:
+          # Forward into pgclerk so it shows up under Alerts + auto-creates incidents.
+          - url: '{{ pgclerk_alerts_webhook_url | default("") }}'
+            send_resolved: true
+
+  - name: Install Prometheus systemd unit
+    ansible.builtin.copy:
+      dest: /etc/systemd/system/prometheus.service
+      mode: '0644'
+      content: |
+        [Unit]
+        Description=Prometheus
+        After=network-online.target
+        [Service]
+        User={{ prom_user }}
+        ExecStart=/usr/local/bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path={{ prom_data_dir }} \
+          --web.listen-address=0.0.0.0:9090
+        Restart=on-failure
+        [Install]
+        WantedBy=multi-user.target
+
+  - name: Install Alertmanager systemd unit
+    ansible.builtin.copy:
+      dest: /etc/systemd/system/alertmanager.service
+      mode: '0644'
+      content: |
+        [Unit]
+        Description=Alertmanager
+        After=network-online.target
+        [Service]
+        User={{ prom_user }}
+        ExecStart=/usr/local/bin/alertmanager \
+          --config.file=/etc/alertmanager/alertmanager.yml \
+          --storage.path={{ am_data_dir }} \
+          --web.listen-address=0.0.0.0:9093
+        Restart=on-failure
+        [Install]
+        WantedBy=multi-user.target
+
+  - name: Enable + start services
+    ansible.builtin.systemd:
+      name: "{{ item }}"
+      enabled: true
+      state: started
+      daemon_reload: true
+    loop: [prometheus, alertmanager]

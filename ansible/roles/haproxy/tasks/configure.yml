@@ -1,0 +1,13 @@
+---
+# 0644 + root:root because haproxy.cfg contains no secrets -- it is just a
+# list of backend hosts and ports. The distro packages all ship the unit
+# running as the 'haproxy' system user, which needs read on this file.
+- name: Render /etc/haproxy/haproxy.cfg
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "haproxy -c -f %s"
+  notify: Reload haproxy

@@ -1,0 +1,16 @@
+---
+- name: Compute effective sysctl settings
+  ansible.builtin.set_fact:
+    baseline_sysctl_effective: "{{ baseline_sysctl_defaults | combine(baseline_sysctl) }}"
+
+- name: Apply sysctl settings
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: "{{ baseline_sysctl_file }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop: "{{ baseline_sysctl_effective | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"

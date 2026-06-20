@@ -1,0 +1,70 @@
+---
+- name: Install pgBackRest package
+  ansible.builtin.include_tasks: "install-packages-{{ _pg_os_variant }}.yml"
+
+# On PG nodes the postgres user already exists (Patroni runs as it) and
+# attempting to mutate the user fails with `usermod: user postgres is
+# currently used by process N` (rc=8).  Detect the existing user via
+# getent and only create-from-scratch on hosts where it's truly missing
+# (typically: dedicated backup_servers that don't run the postgresql role).
+- name: Look up postgres user
+  ansible.builtin.getent:
+    database: passwd
+    key: postgres
+    fail_key: false
+
+- name: Ensure postgres group exists (backup-only hosts)
+  ansible.builtin.group:
+    name: postgres
+    state: present
+    system: true
+  when: getent_passwd.get('postgres') is none
+
+- name: Ensure postgres user exists (backup-only hosts)
+  ansible.builtin.user:
+    name: postgres
+    group: postgres
+    home: "{{ _pgbr_postgres_home }}"
+    shell: /bin/bash
+    system: true
+    state: present
+  when: getent_passwd.get('postgres') is none
+
+- name: Ensure pgBackRest config directory exists
+  ansible.builtin.file:
+    path: /etc/pgbackrest
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+- name: Ensure pgBackRest log directory exists
+  ansible.builtin.file:
+    path: "{{ pgbackrest_log_path }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+- name: Ensure pgBackRest spool directory exists on PG nodes
+  ansible.builtin.file:
+    path: "{{ pgbackrest_spool_path }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+  when: _pgbr_is_pg_node
+
+- name: Ensure pgBackRest repo directory exists on backup server
+  ansible.builtin.file:
+    path: "{{ item.path | default(pgbackrest_repo_path) }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+  loop: "{{ pgbackrest_repos }}"
+  when:
+  - _pgbr_is_backup_server
+  - item.type == 'server'
+  loop_control:
+    label: "{{ item.path | default(pgbackrest_repo_path) }}"

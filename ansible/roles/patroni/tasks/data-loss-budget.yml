@@ -1,0 +1,42 @@
+---
+# Translate the opinionated patroni_data_loss_budget preset into the
+# three concrete knobs the patroni.yml template already consumes:
+#   patroni_synchronous_mode
+#   patroni_synchronous_mode_strict
+#   patroni_max_lag_on_failover
+#
+# This file is included BEFORE configure.yml so the set_fact lines below
+# win over the role defaults. Operators who want to bypass the preset
+# can either leave patroni_data_loss_budget at 'none' (the default) and
+# set the individual knobs explicitly, or set the budget AND override
+# the knobs at play / extra-vars scope -- standard Ansible precedence
+# makes both paths work.
+
+- name: Assert data-loss budget is a supported value
+  ansible.builtin.assert:
+    that: patroni_data_loss_budget in ['none', 'minimal', 'low', 'zero']
+    fail_msg: >-
+      patroni_data_loss_budget must be one of
+      'none' | 'minimal' | 'low' | 'zero'; got
+      '{{ patroni_data_loss_budget }}'.
+
+- name: Apply 'minimal' data-loss budget preset
+  ansible.builtin.set_fact:
+    patroni_synchronous_mode: true
+    patroni_synchronous_mode_strict: false
+    patroni_max_lag_on_failover: 1048576
+  when: patroni_data_loss_budget == 'minimal'
+
+- name: Apply 'low' data-loss budget preset
+  ansible.builtin.set_fact:
+    patroni_synchronous_mode: true
+    patroni_synchronous_mode_strict: false
+    patroni_max_lag_on_failover: 16384
+  when: patroni_data_loss_budget == 'low'
+
+- name: Apply 'zero' data-loss budget preset
+  ansible.builtin.set_fact:
+    patroni_synchronous_mode: true
+    patroni_synchronous_mode_strict: true
+    patroni_max_lag_on_failover: 0
+  when: patroni_data_loss_budget == 'zero'

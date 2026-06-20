@@ -1,0 +1,6 @@
+---
+# Default include is a no-op for mode=manual; the consumer must explicitly
+# `include_role` with `tasks_from: run-now` from a maintenance playbook.
+- name: Configure automatic OS updates
+  ansible.builtin.import_tasks: automatic.yml
+  when: updates_mode == 'automatic'

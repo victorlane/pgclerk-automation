@@ -1,0 +1,17 @@
+## {{ ansible_managed }}
+[Unit]
+Description=pgBackRest {{ _pgbr_backup_type }} backup for stanza {{ pgbackrest_stanza }}
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+ExecStart=/usr/bin/pgbackrest --stanza={{ pgbackrest_stanza }} --type={{ _pgbr_backup_type }} backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

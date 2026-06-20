@@ -1,0 +1,44 @@
+---
+# Build a comma-separated endpoint list once from inventory, then ask etcdctl
+# to health-check every peer. Any unhealthy node fails the play.
+- name: Build endpoint list
+  ansible.builtin.set_fact:
+    etcd_endpoints_csv: >-
+      {{
+        groups[etcd_inventory_group]
+        | map('extract', hostvars, ['etcd_advertise_ip'])
+        | map('regex_replace', '^(.*)$',
+            ('https' if etcd_enable_tls | bool else 'http') ~ '://\1:' ~ etcd_client_port)
+        | join(',')
+      }}
+
+- name: Wait for client port to accept connections
+  ansible.builtin.wait_for:
+    host: "{{ etcd_listen_ip }}"
+    port: "{{ etcd_client_port }}"
+    timeout: 60
+
+# Invoke etcdctl via its versioned install path rather than via $PATH.
+# Non-interactive sudo on RHEL/Rocky 9 does NOT include /usr/local/bin
+# (where install.yml symlinks etcdctl) -- the symlink is operator
+# convenience, not for ansible.  Going to the versioned binary also
+# survives a future etcd_version bump that hasn't refreshed the symlink.
+- name: Run etcdctl endpoint health
+  ansible.builtin.command:
+    cmd: >-
+      {{ etcd_install_dir }}/etcdctl
+      --endpoints={{ etcd_endpoints_csv }}
+      {% if etcd_enable_tls | bool %}
+      --cacert={{ etcd_tls_cert_dir }}/ca.crt
+      --cert={{ etcd_tls_cert_dir }}/server.crt
+      --key={{ etcd_tls_cert_dir }}/server.key
+      {% endif %}
+      endpoint health --cluster -w json
+  environment:
+    ETCDCTL_API: "3"
+  register: etcd_health
+  changed_when: false
+  run_once: true
+  failed_when: >-
+    etcd_health.rc != 0 or
+    (etcd_health.stdout | from_json | rejectattr('health', 'equalto', true) | list | length) > 0

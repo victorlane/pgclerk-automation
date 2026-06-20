@@ -1,0 +1,22 @@
+---
+# EPEL and CRB / PowerTools toggles. Both default on for EL.
+packages_enable_epel: true
+packages_enable_crb: true
+
+# Common package set. Override with a full list to replace, or use
+# packages_extra to append.
+packages_common:
+- bash-completion
+- vim-enhanced
+- tar
+- unzip
+- jq
+- python3-pip
+- lsof
+- tcpdump
+- bind-utils
+
+# Site- or caller-specific additions. Intended to be set by another role
+# that includes this one (`include_role` / `import_role`) to declare extra
+# package needs without owning the install plumbing.
+packages_extra: []

@@ -1,0 +1,82 @@
+---
+# Ensure /dev/watchdog exists and is writable by postgres.
+#
+# Patroni opens /dev/watchdog as the user it runs as (postgres in this role).
+# The default permissions on /dev/watchdog are root-only, so we drop in a
+# udev rule that sets the device to mode 0600 owned by postgres:postgres.
+#
+# Module persistence: write to /etc/modules-load.d/<file>.conf, the
+# systemd-modules-load.service path that works on RHEL, Debian, and
+# Amazon Linux 2023. Distros that disagree on the file name still respect
+# /etc/modules-load.d/*.conf.
+
+- name: Load watchdog kernel module
+  community.general.modprobe:
+    name: "{{ patroni_watchdog_kernel_module }}"
+    state: present
+  register: _wd_modprobe
+  failed_when:
+  - _wd_modprobe is failed
+  - patroni_watchdog_mode == 'required'
+
+- name: Persist watchdog module load across reboots
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/pgclerk-watchdog.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # {{ ansible_managed }}
+      # Loaded so /dev/watchdog is available to Patroni at boot.
+      {{ patroni_watchdog_kernel_module }}
+
+# udev rule -- runs on next /dev/watchdog appearance and on udevadm trigger.
+- name: Drop udev rule so /dev/watchdog is postgres-writable
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/99-pgclerk-watchdog.rules
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # {{ ansible_managed }}
+      KERNEL=="watchdog", OWNER="postgres", GROUP="postgres", MODE="0600"
+  register: _wd_udev
+
+- name: Reload udev rules
+  ansible.builtin.command:
+    cmd: udevadm control --reload
+  when: _wd_udev is changed
+  changed_when: true
+
+- name: Trigger udev for watchdog devices
+  ansible.builtin.command:
+    cmd: udevadm trigger --subsystem-match=misc --action=change
+  when: _wd_udev is changed
+  changed_when: true
+
+# Fallback: explicit chown for already-present device nodes that the udev
+# trigger above did not pick up (e.g. when softdog was loaded before the
+# rule existed).
+- name: Stat watchdog device
+  ansible.builtin.stat:
+    path: "{{ patroni_watchdog_device }}"
+  register: _wd_stat
+
+- name: Ensure watchdog device is postgres-writable
+  ansible.builtin.file:
+    path: "{{ patroni_watchdog_device }}"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  when:
+  - _wd_stat.stat.exists | default(false)
+  - _wd_stat.stat.pw_name | default('') != 'postgres'
+
+- name: Refuse to continue when watchdog is required but device is missing
+  ansible.builtin.assert:
+    that: _wd_stat.stat.exists | default(false)
+    fail_msg: >-
+      patroni_watchdog_mode=required but {{ patroni_watchdog_device }} is
+      absent. Provide a hardware watchdog or fall back to
+      patroni_watchdog_mode=automatic.
+  when: patroni_watchdog_mode == 'required'

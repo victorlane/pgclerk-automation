@@ -1,0 +1,4 @@
+---
+# AL2023 dnf packaging is identical to RHEL for pgBackRest.
+- name: Apply RedHat-pattern pgBackRest install
+  ansible.builtin.include_tasks: install-packages-RedHat.yml

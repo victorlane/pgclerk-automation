@@ -1,0 +1,36 @@
+---
+# Invoke from a maintenance playbook:
+#   - include_role:
+#       name: updates
+#       tasks_from: run-now
+- name: Apply security updates
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    security: true
+    bugfix: false
+  register: _updates_result
+  when: updates_apply == 'security'
+
+- name: Apply all available updates
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+  register: _updates_result_all
+  when: updates_apply == 'default'
+
+- name: Check whether a reboot is required
+  ansible.builtin.command: needs-restarting -r
+  register: _needs_restart
+  failed_when: false
+  changed_when: false
+
+- name: Reboot when updates require it
+  ansible.builtin.reboot:
+    msg: "Reboot triggered by os_rhel_updates run-now"
+    pre_reboot_delay: 5
+    post_reboot_delay: 30
+    reboot_timeout: 600
+  when:
+  - updates_reboot | bool
+  - _needs_restart.rc == 1

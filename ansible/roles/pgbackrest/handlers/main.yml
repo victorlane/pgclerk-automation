@@ -1,0 +1,12 @@
+---
+- name: Reload postgresql for archive_command
+  ansible.builtin.service:
+    name: "{{ postgresql_service }}"
+    state: reloaded
+  when:
+  - _pgbr_is_pg_node | default(false)
+  - postgresql_ha_mode | default('standalone') == 'standalone'
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true

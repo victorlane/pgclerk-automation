@@ -1,0 +1,86 @@
+data_directory = '{{ postgresql_data_dir }}'
+hba_file = '{{ postgresql_hba_path }}'
+
+listen_addresses = '{{ postgresql_listen_addresses }}'
+port = {{ postgresql_port }}
+max_connections = {{ postgresql_max_connections }}
+
+# -- Memory ------------------------------------------------------------------
+{% if _pg_shared_buffers %}
+shared_buffers = {{ _pg_shared_buffers }}
+{% endif %}
+{% if _pg_effective_cache %}
+effective_cache_size = {{ _pg_effective_cache }}
+{% endif %}
+{% if _pg_maint_work_mem %}
+maintenance_work_mem = {{ _pg_maint_work_mem }}
+{% endif %}
+{% if _pg_work_mem %}
+work_mem = {{ _pg_work_mem }}
+{% endif %}
+{% if _pg_wal_buffers %}
+wal_buffers = {{ _pg_wal_buffers }}
+{% endif %}
+
+# -- WAL / checkpointing -----------------------------------------------------
+{% if _pg_min_wal_size %}
+min_wal_size = {{ _pg_min_wal_size }}
+{% endif %}
+{% if _pg_max_wal_size %}
+max_wal_size = {{ _pg_max_wal_size }}
+{% endif %}
+{% if _pg_checkpoint_completion_target %}
+checkpoint_completion_target = {{ _pg_checkpoint_completion_target }}
+{% endif %}
+
+# -- Planner / I/O -----------------------------------------------------------
+{% if _pg_random_page_cost %}
+random_page_cost = {{ _pg_random_page_cost }}
+{% endif %}
+{% if _pg_effective_io_concurrency %}
+effective_io_concurrency = {{ _pg_effective_io_concurrency }}
+{% endif %}
+{% if _pg_default_statistics_target %}
+default_statistics_target = {{ _pg_default_statistics_target }}
+{% endif %}
+
+# -- Parallelism -------------------------------------------------------------
+{% if _pg_max_worker_processes %}
+max_worker_processes = {{ _pg_max_worker_processes }}
+{% endif %}
+{% if _pg_max_parallel_workers %}
+max_parallel_workers = {{ _pg_max_parallel_workers }}
+{% endif %}
+{% if _pg_max_parallel_workers_per_gather %}
+max_parallel_workers_per_gather = {{ _pg_max_parallel_workers_per_gather }}
+{% endif %}
+{% if _pg_max_parallel_maintenance_workers %}
+max_parallel_maintenance_workers = {{ _pg_max_parallel_maintenance_workers }}
+{% endif %}
+
+# -- Extensions --------------------------------------------------------------
+{% if postgresql_pgaudit_enabled | bool and 'pgaudit' not in postgresql_shared_preload_libraries %}
+shared_preload_libraries = '{{ (postgresql_shared_preload_libraries + ["pgaudit"]) | join(",") }}'
+{% else %}
+shared_preload_libraries = '{{ postgresql_shared_preload_libraries | join(",") }}'
+{% endif %}
+
+# -- Security ----------------------------------------------------------------
+password_encryption = scram-sha-256
+{% if postgresql_pgaudit_enabled | bool %}
+pgaudit.log = '{{ postgresql_pgaudit_log }}'
+pgaudit.log_catalog = {{ 'on' if (postgresql_pgaudit_log_catalog | bool) else 'off' }}
+{% endif %}
+
+# -- Logging -----------------------------------------------------------------
+log_destination = 'stderr'
+logging_collector = on
+log_directory = '{{ postgresql_log_dirname }}'
+log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+log_line_prefix = '%m [%p] %q%u@%d '
+log_timezone = 'UTC'
+timezone = 'UTC'
+
+# -- Misc --------------------------------------------------------------------
+datestyle = 'iso, mdy'
+default_text_search_config = 'pg_catalog.english'

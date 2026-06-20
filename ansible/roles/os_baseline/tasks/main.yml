@@ -1,0 +1,52 @@
+---
+# Family-agnostic OS baseline wrapper. Dispatches to the concrete per-family
+# role (os_rhel_*, os_debian_*) based on ansible_facts['os_family'].
+#
+# The consumer's play targets all DB-tier hosts uniformly; this wrapper does
+# the right thing on each host without `when:` skips peppering the play. The
+# included role itself only runs once per host so there's no skip noise.
+
+- name: Set OS family slug for role dispatch
+  ansible.builtin.set_fact:
+    _os_family_slug: "{{ ansible_facts['os_family'] | lower | replace('redhat', 'rhel') }}"
+
+- name: Assert dispatch target exists
+  ansible.builtin.assert:
+    that: _os_family_slug in ['rhel', 'debian']
+    fail_msg: >-
+      os_baseline does not have an implementation for os_family
+      '{{ ansible_facts['os_family'] }}'. Add a wrapper case here or
+      supply your own baseline role.
+
+- name: DEBUG os_baseline_allow_postgres_from
+  ansible.builtin.debug:
+    var: os_baseline_allow_postgres_from
+
+- name: Apply baseline (family={{ _os_family_slug }})
+  ansible.builtin.include_role:
+    name: "os_{{ _os_family_slug }}_baseline"
+  vars:
+    # Pass-through for the pgBackRest peer-allow list.  When non-empty,
+    # sshd accepts postgres logins from the listed CIDRs (in addition to
+    # the global DenyUsers postgres).
+    baseline_allow_postgres_from: "{{ os_baseline_allow_postgres_from | default([]) }}"
+
+- name: Apply packages (family={{ _os_family_slug }})
+  ansible.builtin.include_role:
+    name: "os_{{ _os_family_slug }}_packages"
+  vars:
+    packages_extra: "{{ os_baseline_packages_extra | default([]) }}"
+
+- name: Apply firewall (family={{ _os_family_slug }})
+  ansible.builtin.include_role:
+    name: "os_{{ _os_family_slug }}_firewall"
+  vars:
+    firewall_rules: "{{ os_baseline_firewall_rules | default([]) }}"
+    firewall_services: "{{ os_baseline_firewall_services | default([]) }}"
+
+- name: Apply selinux/apparmor (family={{ _os_family_slug }})
+  ansible.builtin.include_role:
+    name: "os_{{ _os_family_slug }}_selinux"
+  vars:
+    selinux_fcontexts: "{{ os_baseline_selinux_fcontexts | default([]) }}"
+    selinux_booleans: "{{ os_baseline_selinux_booleans | default({}) }}"

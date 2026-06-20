@@ -1,0 +1,50 @@
+;; {{ ansible_managed }}
+;; pgbouncer configuration -- managed by the pgbouncer Ansible role.
+;; Manual edits will be overwritten on the next role run.
+
+[databases]
+{% for db in pgbouncer_databases -%}
+{{ db.name }} = host={{ db.host }} port={{ db.port | default(5432) }}
+{%- if db.dbname is defined %} dbname={{ db.dbname }}{% endif -%}
+{%- if db.pool_size is defined %} pool_size={{ db.pool_size }}{% endif -%}
+{%- if db.auth_user is defined %} auth_user={{ db.auth_user }}{% endif -%}
+{%- if db.user is defined %} user={{ db.user }}{% endif -%}
+{%- if db.password is defined %} password={{ db.password }}{% endif %}
+{% endfor %}
+[pgbouncer]
+listen_addr = {{ pgbouncer_listen_address }}
+listen_port = {{ pgbouncer_listen_port }}
+
+auth_type = {{ pgbouncer_auth_type }}
+auth_file = {{ pgbouncer_auth_file }}
+
+pool_mode = {{ pgbouncer_pool_mode }}
+max_client_conn = {{ pgbouncer_max_client_conn }}
+default_pool_size = {{ pgbouncer_default_pool_size }}
+min_pool_size = {{ pgbouncer_min_pool_size }}
+reserve_pool_size = {{ pgbouncer_reserve_pool_size }}
+reserve_pool_timeout = {{ pgbouncer_reserve_pool_timeout }}
+server_idle_timeout = {{ pgbouncer_server_idle_timeout }}
+query_timeout = {{ pgbouncer_query_timeout }}
+
+;; Admin / stats console access. Connect to the special 'pgbouncer' db on
+;; the listener port, e.g.:
+;;   psql -h <host> -p {{ pgbouncer_listen_port }} -U postgres pgbouncer
+admin_users = {{ pgbouncer_admin_users | join(', ') }}
+stats_users = {{ pgbouncer_stats_users | join(', ') }}
+
+;; Logging. Syslog routes through journald / rsyslog so log rotation is
+;; handled by the OS rather than pgbouncer's own logfile rotation knobs.
+syslog = {{ pgbouncer_syslog }}
+log_connections = {{ pgbouncer_log_connections }}
+log_disconnections = {{ pgbouncer_log_disconnections }}
+log_pooler_errors = {{ pgbouncer_log_pooler_errors }}
+
+;; TLS is deliberately not configured in v1. TODO(v2): client_tls_sslmode,
+;; client_tls_cert_file, client_tls_key_file for downstream, and
+;; server_tls_sslmode for upstream PG.
+{% if pgbouncer_client_tls_enabled or pgbouncer_server_tls_enabled %}
+;; WARNING: pgbouncer_*_tls_enabled is true but TLS rendering is not
+;; implemented yet. Add the cert/key paths to pgbouncer.ini manually or
+;; wait for v2.
+{% endif %}

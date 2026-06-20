@@ -1,17 +1,24 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         managed-gcp-cloudsql
-# title:       GCP Cloud SQL · provision
-# category:    managed
-# surface:     gcp
-# destructive: False
-
-- name: "GCP Cloud SQL · provision"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+# Managed PG on GCP via Cloud SQL. Extra-vars from the wizard:
+#   gcp_project, gcp_region, db_name, db_tier, db_version
+#   db_database_flags: { name: value }   (extensions go through here, not SQL)
+#   db_auth_password: <vaulted>
+- name: Provision Cloud SQL Postgres
+  hosts: localhost
   gather_facts: false
+  vars:
+    db_tier: "{{ db_tier | default('db-custom-2-7680') }}"
+    db_version: "{{ db_version | default('POSTGRES_17') }}"
+    db_database_flags: "{{ db_database_flags | default({}) }}"
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'managed-gcp-cloudsql'"
-          - "Replace ansible/playbooks/managed/gcp-cloudsql.yml with the real playbook."
+    - name: Create Cloud SQL instance
+      google.cloud.gcp_sql_instance:
+        name: "{{ db_name }}"
+        project: "{{ gcp_project }}"
+        region: "{{ gcp_region }}"
+        database_version: "{{ db_version }}"
+        settings:
+          tier: "{{ db_tier }}"
+          database_flags: "{{ [ {'name': k, 'value': v } for k, v in db_database_flags.items() ] }}"
+        state: present
+        auth_kind: serviceaccount

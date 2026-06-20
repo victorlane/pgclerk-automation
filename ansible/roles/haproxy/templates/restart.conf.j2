@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+# systemd drop-in for haproxy.service. The stock unit shipped by the
+# distro package does not set Restart=, so a SIGSEGV / OOM kill leaves
+# the load balancer down until ops notices. Restart-on-failure with a
+# small backoff self-heals transient crashes without masking real outages.
+[Service]
+Restart=on-failure
+RestartSec=5s

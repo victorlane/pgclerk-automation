@@ -1,17 +1,126 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         drop-connections
-# title:       PostgreSQL · drop connections
-# category:    maintenance
-# surface:     postgres
-# destructive: False
+# Terminate sessions matching a filter. Last-resort op -- use this only when
+# you accept the application impact (in-flight transactions are rolled back).
+#
+# Required vars:
+#   db_name                   - only sessions in this DB are eligible.
+#
+# Optional vars:
+#   user_name                 - restrict to sessions owned by this role
+#                               (default: omit -> all users).
+#   min_state_duration        - PostgreSQL interval string, e.g. "10 minutes",
+#                               "1 hour" (default: omit -> all states). When
+#                               set, only sessions whose state_change is older
+#                               than (now() - interval '<value>') are touched.
+#   exclude_application_names - list of application_name values to spare
+#                               (default: ["pgclerk", "Patroni", "pgbouncer",
+#                               "Patroni Wal-E", "pg_basebackup"]).
+#                               Sessions whose application_name is in this
+#                               list are NEVER terminated.  Patroni is in
+#                               the default list because terminating its
+#                               keepalive can trigger a spurious failover.
+#                               The active Ansible session is also excluded
+#                               via pg_backend_pid().
+#
+# Runs against the primary only. NOT idempotent: subsequent runs will report
+# fewer (or zero) matches.
+#
+# Example -- kill all idle billing_app sessions in the billing DB that have
+# been idle for at least 10 minutes, while sparing pgclerk + pgbouncer:
+#
+#   ansible-playbook playbooks/maintenance/drop-connections.yml \
+#     -e db_name=billing -e user_name=billing_app \
+#     -e min_state_duration="10 minutes" \
+#     -e '{"exclude_application_names": ["pgclerk", "pgbouncer"]}' \
+#     --limit customer_acme
 
-- name: "PostgreSQL · drop connections"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+- name: Drop matching PostgreSQL sessions
+  hosts: "{{ groups['postgres_primary'] | default([]) | first | default(groups['postgres_servers'] | first) }}"
+  become: true
   gather_facts: false
+  vars:
+    # Always-spare set: the playbook itself, Patroni (terminating its
+    # keepalive can flap leadership), pgbouncer (clients all live behind
+    # it; killing it kills the world), and the basebackup that Patroni
+    # uses for replica rebuilds.  Override to add customer-specific
+    # application_names.
+    exclude_application_names:
+    - pgclerk
+    - Patroni
+    - pgbouncer
+    - Patroni Wal-E
+    - pg_basebackup
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'drop-connections'"
-          - "Replace ansible/playbooks/maintenance/drop-connections.yml with the real playbook."
+  - name: Refuse to run without an explicit --limit
+    ansible.builtin.assert:
+      that: ansible_limit is defined
+      fail_msg: >-
+        Refusing to run drop-connections against the entire inventory. Re-run
+        with --limit <customer_group_or_host>.
+
+  - name: Assert required vars are defined
+    ansible.builtin.assert:
+      that:
+      - db_name is defined
+      - db_name | length > 0
+      fail_msg: "db_name must be provided (-e db_name=<name>)."
+
+  - name: Compose match clause fragments
+    ansible.builtin.set_fact:
+      _user_clause: "{{ 'AND usename = %(user_name)s' if user_name is defined else '' }}"
+      _duration_clause: "{{ \"AND state_change < (now() - (%(min_state_duration)s)::interval)\" if min_state_duration is defined else '' }}"
+
+  - name: List matching sessions
+    become_user: postgres
+    community.postgresql.postgresql_query:
+      db: postgres
+      query: >-
+        SELECT pid, datname, usename, application_name, client_addr, state,
+               state_change, backend_start, wait_event_type, wait_event
+        FROM pg_stat_activity
+        WHERE datname = %(db_name)s
+          AND pid <> pg_backend_pid()
+          AND COALESCE(application_name, '') <> ALL(%(exclude_application_names)s)
+          {{ _user_clause }}
+          {{ _duration_clause }}
+        ORDER BY backend_start
+      named_args:
+        db_name: "{{ db_name }}"
+        user_name: "{{ user_name | default(omit) }}"
+        min_state_duration: "{{ min_state_duration | default(omit) }}"
+        exclude_application_names: "{{ exclude_application_names }}"
+    register: _matching_sessions
+
+  - name: Show pre-flight list of sessions about to be terminated
+    ansible.builtin.debug:
+      msg:
+      - "Database:                  {{ db_name }}"
+      - "User filter:               {{ user_name | default('(all users)') }}"
+      - "Min state duration:        {{ min_state_duration | default('(any)') }}"
+      - "Excluded application_name: {{ exclude_application_names }}"
+      - "Matching sessions:         {{ _matching_sessions.rowcount }}"
+
+  - name: Show matching session detail
+    ansible.builtin.debug:
+      var: _matching_sessions.query_result
+    when: _matching_sessions.rowcount | int > 0
+
+  - name: Terminate matching backends
+    become_user: postgres
+    community.postgresql.postgresql_query:
+      db: postgres
+      query: "SELECT pg_terminate_backend(%(pid)s) AS terminated"
+      named_args:
+        pid: "{{ item.pid }}"
+    loop: "{{ _matching_sessions.query_result }}"
+    loop_control:
+      label: "pid={{ item.pid }} user={{ item.usename }} app={{ item.application_name }}"
+    register: _term_results
+    when: _matching_sessions.rowcount | int > 0
+
+  - name: Report termination summary
+    ansible.builtin.debug:
+      msg: >-
+        Requested termination of {{ _matching_sessions.rowcount }} session(s)
+        in {{ db_name }}. Note: pg_terminate_backend returns true on signal
+        delivery, not on session close -- re-run pg_stat_activity to confirm.

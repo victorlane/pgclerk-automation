@@ -1,0 +1,25 @@
+---
+# Debian/Ubuntu ship prometheus-postgres-exporter in main. The package's
+# /lib/systemd/system/prometheus-postgres-exporter.service uses a different
+# service name from ours, but our unit drops in at
+# /etc/systemd/system/postgres_exporter.service so there's no collision --
+# the package's unit will simply stay disabled.
+- name: Install postgres_exporter package
+  ansible.builtin.apt:
+    name: "{{ postgres_exporter_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: not postgres_exporter_install_from_tarball
+
+- name: Disable the package's shipped systemd unit
+  when: not postgres_exporter_install_from_tarball
+  ansible.builtin.service:
+    name: prometheus-postgres-exporter
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Install from upstream tarball
+  ansible.builtin.include_tasks: install-tarball.yml
+  when: postgres_exporter_install_from_tarball

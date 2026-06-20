@@ -441,3 +441,84 @@ entries:
     destructive: false
     requires_window: false
     description: Provision Postgres on Azure Flexible Server.
+
+  # ---------- Maintenance (migrated from pgmanager/) ----------
+  - key: cis-audit
+    title: PostgreSQL · CIS audit (single host)
+    playbook: ansible/playbooks/maintenance/cis-audit.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Run CIS PostgreSQL benchmark checks against one host.
+
+  - key: tls-bootstrap
+    title: PostgreSQL · TLS bootstrap
+    playbook: ansible/playbooks/maintenance/tls-bootstrap.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: true
+    requires_window: true
+    description: Issue + install server TLS certificates for the cluster.
+
+  - key: undrain-node
+    title: Cluster · undrain node
+    playbook: ansible/playbooks/maintenance/undrain-node.yml
+    category: maintenance
+    surface: linux
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Re-add a previously drained node to active rotation.
+
+  - key: upgrade-cluster
+    title: PostgreSQL · minor version upgrade (cluster)
+    playbook: ansible/playbooks/maintenance/upgrade-cluster.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: true
+    requires_window: true
+    description: Rolling minor-version upgrade across the cluster.
+
+  - key: upgrade-major
+    title: PostgreSQL · major version upgrade
+    playbook: ansible/playbooks/maintenance/upgrade-major.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: true
+    requires_window: true
+    description: pg_upgrade-driven major upgrade. Requires a maintenance window.
+
+  - key: verify-backup
+    title: pgBackRest · verify last backup
+    playbook: ansible/playbooks/maintenance/verify-backup.yml
+    category: maintenance
+    surface: postgres
+    pg_kind: task
+    destructive: false
+    requires_window: false
+    description: Restore-test the most recent backup against a scratch directory.
+
+  - key: konnectivity-agent-uninstall
+    title: Konnectivity · uninstall agent
+    playbook: ansible/playbooks/maintenance/konnectivity-agent-uninstall.yml
+    category: maintenance
+    surface: linux
+    pg_kind: n/a
+    destructive: true
+    requires_window: false
+    description: Remove the konnectivity agent from a host.
+
+  - key: konnectivity-worker-allow
+    title: Konnectivity · allow worker
+    playbook: ansible/playbooks/maintenance/konnectivity-worker-allow.yml
+    category: maintenance
+    surface: linux
+    pg_kind: n/a
+    destructive: false
+    requires_window: false
+    description: Grant a worker SSH agent reach into a cluster host.

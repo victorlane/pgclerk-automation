@@ -1,0 +1,23 @@
+---
+# Debian/Ubuntu: prometheus-node-exporter from main. Binary at
+# /usr/bin/prometheus-node-exporter. We disable the package's shipped
+# unit and write our own as node_exporter.service.
+- name: Install node_exporter package
+  ansible.builtin.apt:
+    name: "{{ node_exporter_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: not node_exporter_install_from_tarball
+
+- name: Disable the package's shipped systemd unit
+  when: not node_exporter_install_from_tarball
+  ansible.builtin.service:
+    name: prometheus-node-exporter
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Install from upstream tarball
+  ansible.builtin.include_tasks: install-tarball.yml
+  when: node_exporter_install_from_tarball

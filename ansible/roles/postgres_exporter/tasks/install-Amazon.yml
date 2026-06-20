@@ -1,0 +1,6 @@
+---
+# AL2023 main repo has no postgres_exporter package, so the tarball path is
+# the only option. install-tarball.yml creates the user/group and lays down
+# the binary; the configure.yml step renders the systemd unit.
+- name: Install from upstream tarball
+  ansible.builtin.include_tasks: install-tarball.yml

@@ -1,0 +1,127 @@
+---
+- name: Render pgbackrest.conf
+  ansible.builtin.template:
+    src: pgbackrest.conf.j2
+    dest: /etc/pgbackrest/pgbackrest.conf
+    owner: postgres
+    group: postgres
+    mode: "0640"
+
+# Patroni mode: push archive_mode/archive_command into Patroni's DCS via
+# the REST API on the bootstrap leader (PATCH /config merges).  Patroni
+# propagates the change to every member's running postgresql.conf and
+# reloads.  archive_mode is a postmaster-context setting, so a restart is
+# required for it to take effect; we POST /restart on the leader to
+# trigger it.  All run_once -- the REST call hits the DCS and the change
+# fans out from there.
+- name: Patch Patroni DCS with pgbackrest archive params (run_once)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ patroni_restapi_port | default(8008) }}/config"
+    method: PATCH
+    headers:
+      Content-Type: application/json
+    body_format: json
+    body:
+      postgresql:
+        parameters:
+          archive_mode: "on"
+          archive_command: "pgbackrest --stanza={{ pgbackrest_stanza }} archive-push %p"
+          archive_timeout: 60
+          wal_level: replica
+          max_wal_senders: 10
+    status_code: [200]
+  register: _pgbr_patroni_patch
+  delegate_to: "{{ groups['postgres_primary'] | first }}"
+  run_once: true
+  when:
+  - _pgbr_is_pg_node
+  - postgresql_ha_mode | default('standalone') == 'patroni'
+
+# archive_mode is postmaster-context; Patroni won't apply it via reload.
+# After the PATCH, each member's patronictl list shows "pending restart".
+# patronictl restart --pending-restart --force <scope> restarts only the
+# members that need it, in a controlled rolling sequence (replicas
+# first, then the leader -- with an automatic switchover when the
+# leader needs restarting).
+#
+# Runs once on the leader.  --force suppresses the confirmation prompt;
+# --pending only restarts members that actually need it (idempotent on
+# re-runs after the first install).
+- name: Roll Patroni members to pick up archive_mode (run_once)
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/patronictl
+      -c /etc/patroni/patroni.yml
+      restart --force --pending {{ patroni_scope | default('pgclerk') }}
+  register: _pgbr_patroni_restart
+  changed_when: "'restart' in _pgbr_patroni_restart.stdout"
+  delegate_to: "{{ groups['postgres_primary'] | first }}"
+  run_once: true
+  when:
+  - _pgbr_is_pg_node
+  - postgresql_ha_mode | default('standalone') == 'patroni'
+  - _pgbr_patroni_patch.changed
+
+# Verify archive_mode is on after the restart sequence (run_once on
+# the leader -- if it's on here, it's on cluster-wide).
+- name: Wait for archive_mode=on on the leader after restart
+  ansible.builtin.command:
+    cmd: "psql -tAXc 'SHOW archive_mode'"
+  become: true
+  become_user: postgres
+  register: _pgbr_archive_mode
+  retries: 30
+  delay: 2
+  until: _pgbr_archive_mode.stdout | trim == 'on'
+  changed_when: false
+  delegate_to: "{{ groups['postgres_primary'] | first }}"
+  run_once: true
+  when:
+  - _pgbr_is_pg_node
+  - postgresql_ha_mode | default('standalone') == 'patroni'
+
+- name: Ensure conf.d include directory exists (standalone, PG node)
+  ansible.builtin.file:
+    path: "{{ postgresql_data_dir }}/conf.d"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+  when:
+  - _pgbr_is_pg_node
+  - postgresql_ha_mode | default('standalone') == 'standalone'
+  - pgbackrest_manage_archive_command | bool
+
+- name: Ensure postgresql.conf loads conf.d (standalone, PG node)
+  ansible.builtin.lineinfile:
+    path: "{{ postgresql_conf_path }}"
+    line: "include_dir = 'conf.d'"
+    regexp: '^\s*include_dir\s*=\s*''conf\.d'''
+    state: present
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  when:
+  - _pgbr_is_pg_node
+  - postgresql_ha_mode | default('standalone') == 'standalone'
+  - pgbackrest_manage_archive_command | bool
+  notify: Reload postgresql for archive_command
+
+- name: Drop archive_command override (standalone, PG node)
+  ansible.builtin.copy:
+    dest: "{{ postgresql_data_dir }}/conf.d/10-pgbackrest.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+    content: |
+      # Managed by the pgbackrest Ansible role -- do not edit by hand.
+      archive_mode = on
+      archive_command = 'pgbackrest --stanza={{ pgbackrest_stanza }} archive-push %p'
+      archive_timeout = 60
+      wal_level = replica
+      max_wal_senders = 10
+  when:
+  - _pgbr_is_pg_node
+  - postgresql_ha_mode | default('standalone') == 'standalone'
+  - pgbackrest_manage_archive_command | bool
+  notify: Reload postgresql for archive_command

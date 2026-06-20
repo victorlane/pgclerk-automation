@@ -1,0 +1,314 @@
+---
+# Major-version upgrade via pg_upgrade --link (standalone clusters only).
+# This is a discrete primitive: it upgrades ONE host in place.  HA-aware
+# orchestration (drain replicas, switchover, rebuild standbys) is layered
+# on top in a separate playbook.
+#
+# Usage:
+#   ansible-playbook playbooks/maintenance/upgrade-major.yml \
+#     --limit <host> \
+#     -e upgrade_to_version=18
+#
+# Required vars:
+#   upgrade_to_version : target PG major version (one of 15, 16, 17, 18).
+#                        Must be strictly greater than the currently-installed
+#                        version on this host.
+#
+# Optional vars:
+#   upgrade_method     : link (default) | copy.  link is fast (hardlinks
+#                        old cluster files into the new data dir) but the
+#                        old cluster becomes unusable.  copy is safe but
+#                        takes O(disk-size) time.
+#   upgrade_jobs       : parallel workers for pg_upgrade (default: vCPU/2).
+#   upgrade_skip_check : when true, skip the pg_upgrade --check pre-flight
+#                        pass (default: false).  Don't do this.
+#   upgrade_keep_old   : when true, leave the old data dir intact after a
+#                        successful upgrade (default: false in link mode
+#                        because link mode breaks the old cluster anyway,
+#                        true in copy mode).
+#   upgrade_analyze    : when true, run vacuumdb --all --analyze-in-stages
+#                        after the upgrade completes (default: true --
+#                        without this, queries crawl until stats refresh).
+#
+# Refusals:
+#   - postgresql_ha_mode == 'patroni'  : Patroni clusters need a separate
+#     orchestration (drain, stop Patroni, upgrade, restore Patroni config,
+#     restart leader, rebuild replicas).  Out of scope for this playbook.
+#   - Postgres not running on the target          : upgrade requires the
+#     source cluster to be stoppable cleanly.
+#   - Source and target on different filesystems  : --link cannot hardlink
+#     across mounts.  Use --copy or move the new data dir.
+#   - Active replication slots                    : pg_upgrade doesn't
+#     migrate them.  Drop or recreate post-upgrade.
+#   - Extension version skew                      : pg_upgrade --check
+#     surfaces these in its report; we run --check and fail hard if it
+#     reports any incompatibility.
+#
+# Behaviour:
+#   - Installs target-version packages alongside the source via the
+#     postgresql role (with postgresql_version flipped).
+#   - Runs pg_upgrade --check first; aborts and prints the report on
+#     failure.
+#   - Stops the source cluster, runs the upgrade, starts the new cluster.
+#   - Disables the source systemd unit so it can't accidentally restart.
+#   - Re-enables + starts the target unit.
+#   - Runs analyze-in-stages by default.
+#   - Surfaces structured output: source version, target version,
+#     upgrade duration, target-cluster post-upgrade summary.
+
+- name: Validate parameters
+  hosts: localhost
+  gather_facts: false
+  tasks:
+  - name: Refuse to run without --limit
+    ansible.builtin.assert:
+      that: ansible_limit is defined
+      fail_msg: >-
+        Major-version upgrade rewrites a live cluster in place.  Re-run
+        with --limit <host> targeting exactly one host at a time.
+
+  - name: Assert upgrade_to_version is supported
+    ansible.builtin.assert:
+      that:
+      - upgrade_to_version is defined
+      - upgrade_to_version | string in ['15', '16', '17', '18']
+      fail_msg: "upgrade_to_version must be one of 15 / 16 / 17 / 18; got {{ upgrade_to_version | default('undefined') }}."
+
+- name: Upgrade PostgreSQL major version
+  hosts: postgres_servers
+  become: true
+  gather_facts: true
+  vars:
+    upgrade_method: link
+    upgrade_skip_check: false
+    upgrade_keep_old: false
+    upgrade_analyze: true
+  tasks:
+  # --- Pre-flight ---------------------------------------------------------
+
+  - name: Refuse to upgrade Patroni-managed clusters via this playbook
+    ansible.builtin.assert:
+      that: (postgresql_ha_mode | default('standalone')) == 'standalone'
+      fail_msg: >-
+        Host {{ inventory_hostname }} runs postgresql_ha_mode=patroni.
+        HA upgrades need a separate orchestration -- drain via
+        patronictl, stop Patroni, run this playbook, then recreate the
+        Patroni cluster.  Tracked as a follow-up.
+
+  - name: Resolve OS variant + per-OS PG paths
+    ansible.builtin.set_fact:
+      _up_os_variant: >-
+        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+           else ansible_facts['os_family'] }}
+
+  - name: Load source-version PG paths
+    ansible.builtin.include_vars:
+      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _up_os_variant }}.yml"
+      name: _up_src_vars
+    vars:
+      postgresql_version: "{{ ansible_local.postgresql_version | default(postgresql_version) }}"
+
+  - name: Read installed PG major version (PG_VERSION file)
+    ansible.builtin.slurp:
+      src: "{{ _up_src_vars.postgresql_data_dir }}/PG_VERSION"
+    register: _up_pg_version_file
+
+  - name: Compute source PG major version
+    ansible.builtin.set_fact:
+      _up_from_version: "{{ (_up_pg_version_file.content | b64decode | trim).split('.')[0] }}"
+
+  - name: Assert target version is strictly greater than source
+    ansible.builtin.assert:
+      that: (upgrade_to_version | int) > (_up_from_version | int)
+      fail_msg: >-
+        Target version {{ upgrade_to_version }} is not greater than the
+        installed source version {{ _up_from_version }}.  pg_upgrade
+        only goes forwards.
+
+  - name: Resolve target-version PG paths
+    ansible.builtin.set_fact:
+      _up_target_postgresql_version: "{{ upgrade_to_version }}"
+
+  - name: Load target-version PG paths
+    ansible.builtin.include_vars:
+      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _up_os_variant }}.yml"
+      name: _up_dst_vars
+    vars:
+      postgresql_version: "{{ upgrade_to_version }}"
+
+  - name: Surface upgrade plan
+    ansible.builtin.debug:
+      msg:
+      - "Upgrade plan for {{ inventory_hostname }}"
+      - "  Source PG version : {{ _up_from_version }}"
+      - "  Target PG version : {{ upgrade_to_version }}"
+      - "  Source data dir   : {{ _up_src_vars.postgresql_data_dir }}"
+      - "  Target data dir   : {{ _up_dst_vars.postgresql_data_dir }}"
+      - "  Source bin path   : {{ _up_src_vars.postgresql_bin_path }}"
+      - "  Target bin path   : {{ _up_dst_vars.postgresql_bin_path }}"
+      - "  Upgrade method    : {{ upgrade_method }}"
+
+  - name: Refuse cross-filesystem --link upgrades
+    block:
+    - name: Inspect filesystem of source data dir
+      ansible.builtin.command: "stat -f -c '%i' {{ _up_src_vars.postgresql_data_dir }}"
+      register: _up_src_fs
+      changed_when: false
+
+    - name: Inspect filesystem of target data dir's parent
+      ansible.builtin.command: "stat -f -c '%i' {{ _up_dst_vars.postgresql_data_dir | dirname }}"
+      register: _up_dst_fs
+      changed_when: false
+
+    - name: Assert same filesystem when method=link
+      ansible.builtin.assert:
+        that: _up_src_fs.stdout == _up_dst_fs.stdout
+        fail_msg: >-
+          --link requires the source and target data dirs on the same
+          filesystem; got source={{ _up_src_fs.stdout }} target=
+          {{ _up_dst_fs.stdout }}.  Use upgrade_method=copy, or place the
+          new data dir under the same mount.
+    when: upgrade_method == 'link'
+
+  - name: Refuse to upgrade with active replication slots
+    become: true
+    become_user: postgres
+    community.postgresql.postgresql_query:
+      db: postgres
+      query: "SELECT slot_name, slot_type, active FROM pg_replication_slots WHERE active = true"
+    register: _up_active_slots
+    failed_when: (_up_active_slots.query_result | default([])) | length > 0
+
+  # --- Install target packages -------------------------------------------
+
+  - name: Install target-version PG packages via the postgresql role
+    ansible.builtin.include_role:
+      name: postgresql
+      tasks_from: "install-{{ _up_os_variant }}.yml"
+    vars:
+      postgresql_version: "{{ upgrade_to_version }}"
+      postgresql_ha_mode: standalone
+
+  # --- pg_upgrade --check -------------------------------------------------
+
+  - name: Run pg_upgrade --check (pre-flight)
+    become: true
+    become_user: postgres
+    ansible.builtin.command:
+      argv:
+      - "{{ _up_dst_vars.postgresql_bin_path }}/pg_upgrade"
+      - "--old-bindir={{ _up_src_vars.postgresql_bin_path }}"
+      - "--new-bindir={{ _up_dst_vars.postgresql_bin_path }}"
+      - "--old-datadir={{ _up_src_vars.postgresql_data_dir }}"
+      - "--new-datadir={{ _up_dst_vars.postgresql_data_dir }}"
+      - "--check"
+      chdir: "{{ _up_dst_vars.postgresql_data_dir | dirname }}"
+    register: _up_check
+    changed_when: false
+    failed_when: _up_check.rc != 0
+    when: not (upgrade_skip_check | bool)
+
+  - name: Display pre-flight check output
+    ansible.builtin.debug:
+      var: _up_check.stdout_lines
+    when: not (upgrade_skip_check | bool)
+
+  # --- Stop source, run upgrade ------------------------------------------
+
+  - name: Stop the source PG service
+    ansible.builtin.systemd:
+      name: "{{ _up_src_vars.postgresql_service }}"
+      state: stopped
+
+  - name: Capture upgrade start time
+    ansible.builtin.set_fact:
+      _up_t0: "{{ ansible_date_time.iso8601 }}"
+
+  - name: Run pg_upgrade
+    become: true
+    become_user: postgres
+    ansible.builtin.command:
+      argv: >-
+        {{ [
+             _up_dst_vars.postgresql_bin_path ~ '/pg_upgrade',
+             '--old-bindir=' ~ _up_src_vars.postgresql_bin_path,
+             '--new-bindir=' ~ _up_dst_vars.postgresql_bin_path,
+             '--old-datadir=' ~ _up_src_vars.postgresql_data_dir,
+             '--new-datadir=' ~ _up_dst_vars.postgresql_data_dir,
+             '--jobs=' ~ (upgrade_jobs | default(((ansible_facts.processor_vcpus | default(2)) | int // 2) | string)),
+           ] + ([ '--link' ] if upgrade_method == 'link' else [ '--copy' ])
+        }}
+      chdir: "{{ _up_dst_vars.postgresql_data_dir | dirname }}"
+    register: _up_run
+    changed_when: true
+
+  - name: Capture upgrade stop time
+    ansible.builtin.set_fact:
+      _up_t1: "{{ ansible_date_time.iso8601 }}"
+
+  # --- Switch services ----------------------------------------------------
+
+  - name: Disable source PG service so it cannot accidentally start
+    ansible.builtin.systemd:
+      name: "{{ _up_src_vars.postgresql_service }}"
+      enabled: false
+      state: stopped
+
+  - name: Enable + start target PG service
+    ansible.builtin.systemd:
+      name: "{{ _up_dst_vars.postgresql_service }}"
+      enabled: true
+      state: started
+      daemon_reload: true
+
+  # --- Post-upgrade -------------------------------------------------------
+
+  - name: Run analyze-in-stages so the planner has fresh stats
+    become: true
+    become_user: postgres
+    ansible.builtin.command:
+      argv:
+      - "{{ _up_dst_vars.postgresql_bin_path }}/vacuumdb"
+      - "--all"
+      - "--analyze-in-stages"
+      - "--jobs={{ upgrade_jobs | default(((ansible_facts.processor_vcpus | default(2)) | int // 2) | string) }}"
+    register: _up_analyze
+    changed_when: true
+    when: upgrade_analyze | bool
+
+  - name: Confirm new server version
+    become: true
+    become_user: postgres
+    community.postgresql.postgresql_query:
+      db: postgres
+      query: "SELECT version() AS server_version"
+    register: _up_version_check
+
+  - name: Optionally remove the source data dir (link mode default = remove)
+    ansible.builtin.file:
+      path: "{{ _up_src_vars.postgresql_data_dir }}"
+      state: absent
+    when:
+    - upgrade_method == 'link'
+    - not (upgrade_keep_old | bool)
+
+  - name: Surface upgrade verdict
+    ansible.builtin.debug:
+      msg:
+      - "########################################################################"
+      - "pg_upgrade complete on {{ inventory_hostname }}"
+      - "  {{ _up_from_version }} -> {{ upgrade_to_version }}  ({{ upgrade_method }} mode)"
+      - "  Started        : {{ _up_t0 }}"
+      - "  Stopped        : {{ _up_t1 }}"
+      - "  New server     : {{ (_up_version_check.query_result | first).server_version }}"
+      - "  Analyze        : {{ 'ran' if upgrade_analyze | bool else 'SKIPPED -- queries will crawl until you run vacuumdb --all --analyze-in-stages' }}"
+      - "  Old data dir   : {{ _up_src_vars.postgresql_data_dir }}{{ ' (removed)' if (upgrade_method == 'link' and not upgrade_keep_old | bool) else ' (kept)' }}"
+      - ""
+      - "Follow-ups the operator should consider:"
+      - "  - Confirm application connectivity through pgbouncer / HAProxy."
+      - "  - Restart prometheus-postgres-exporter so its DSN reaches the"
+      - "    new cluster (port unchanged; the unit may need bouncing on"
+      - "    some setups)."
+      - "  - If pg_stat_statements stats matter, ANALYZE is enough but"
+      - "    cumulative pg_stat_* counters are reset."
+      - "########################################################################"

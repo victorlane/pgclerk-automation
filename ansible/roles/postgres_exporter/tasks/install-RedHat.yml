@@ -1,0 +1,14 @@
+---
+# PGDG ships prometheus-postgres-exporter for EL8/EL9; the package creates the
+# postgres_exporter system user and the binary at /usr/bin/postgres_exporter.
+# We override the systemd unit so the env file + listen address come from this
+# role rather than the package's /etc/sysconfig/postgres_exporter defaults.
+- name: Install postgres_exporter package
+  ansible.builtin.dnf:
+    name: "{{ postgres_exporter_packages }}"
+    state: present
+  when: not postgres_exporter_install_from_tarball
+
+- name: Install from upstream tarball
+  ansible.builtin.include_tasks: install-tarball.yml
+  when: postgres_exporter_install_from_tarball

@@ -1,17 +1,331 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         restore
-# title:       PostgreSQL · restore from backup
-# category:    maintenance
-# surface:     postgres
-# destructive: True
+# Operator-facing pgBackRest restore (topology-aware).
+#
+# This is a DESTRUCTIVE, downtime-incurring operation. It overwrites the
+# current data directory on the target host(s) with the restored state.
+# Always schedule inside a maintenance window and gate on
+# `restore_confirm == restore_stanza`.
+#
+# Topology dispatch:
+#   postgresql_ha_mode=patroni    -> refuse unless Patroni is already paused
+#                                     (operator runs `patronictl pause` first).
+#                                     Stops Patroni on every node, restores on
+#                                     the chosen recovery node, then prints
+#                                     the `patronictl resume` instructions so
+#                                     replicas reinit from the new leader.
+#   postgresql_ha_mode=standalone -> stops postgresql, restores in place,
+#                                     starts postgresql, waits for ready.
+#
+# Required vars:
+#   restore_stanza        - pgBackRest stanza name to restore.
+#   restore_confirm       - must equal restore_stanza. Destructive gate; we
+#                            do NOT proceed otherwise.
+#
+# Optional vars:
+#   restore_target        - "latest" | "time" | "name" | "xid". Default: latest.
+#   restore_target_value  - required when restore_target != latest. Examples:
+#                            time   -> "2026-06-15 14:00:00+00"
+#                            name   -> "release-20260615" (--target-name)
+#                            xid    -> "47114711"
+#   restore_timeline      - default "current". Pass "latest" to bump tli.
+#   restore_type          - "default" (recovery in place; pgBackRest will
+#                            re-create the data dir) | "delta" (in-place,
+#                            faster, only reconciles diffs) | "preserve"
+#                            (existing files are kept where possible).
+#                            Default: "default".
+#   restore_recovery_host - hostname of the node to restore onto. In Patroni
+#                            mode this becomes the new leader after resume.
+#                            Default: the current Patroni leader, or the first
+#                            host in postgres_primary for standalone.
+#   restore_wipe_wal      - bool, default false. When true and restore_type=
+#                            delta, removes pg_wal/* before restore to force
+#                            a clean WAL stream.
+#
+# Refusals:
+#   - restore_confirm != restore_stanza.
+#   - restore_target != latest but restore_target_value is empty.
+#   - Patroni mode and the cluster is not currently paused.
+#
+# After this playbook:
+#   - Patroni mode: operator must run `patronictl resume <scope>` and then
+#     `patronictl reinit <scope> <replica>` for each replica that needs to
+#     re-sync from the new leader.
+#   - Standalone: nothing manual; PG starts back up at the end.
 
-- name: "PostgreSQL · restore from backup"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+- name: Validate restore parameters
+  hosts: localhost
   gather_facts: false
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'restore'"
-          - "Replace ansible/playbooks/maintenance/restore.yml with the real playbook."
+  - name: Assert restore_stanza is defined
+    ansible.builtin.assert:
+      that:
+      - restore_stanza is defined
+      - restore_stanza | length > 0
+      fail_msg: "restore_stanza must be provided (-e restore_stanza=<name>)."
+
+  - name: Assert destructive confirmation matches stanza name
+    ansible.builtin.assert:
+      that:
+      - restore_confirm is defined
+      - restore_confirm == restore_stanza
+      fail_msg: >-
+        restore_confirm must equal restore_stanza ('{{ restore_stanza }}').
+        This is a destructive operation; the confirmation gate is mandatory.
+
+  - name: Assert restore_target is a supported value
+    ansible.builtin.assert:
+      that: restore_target | default('latest') in ['latest', 'time', 'name', 'xid']
+      fail_msg: >-
+        restore_target must be one of: latest, time, name, xid.
+        Got '{{ restore_target | default('latest') }}'.
+
+  - name: Assert restore_target_value when target is not latest
+    when: (restore_target | default('latest')) != 'latest'
+    ansible.builtin.assert:
+      that:
+      - restore_target_value is defined
+      - restore_target_value | length > 0
+      fail_msg: >-
+        restore_target='{{ restore_target }}' requires
+        restore_target_value (e.g. "2026-06-15 14:00:00+00").
+
+  - name: Assert restore_type is a supported value
+    ansible.builtin.assert:
+      that: restore_type | default('default') in ['default', 'delta', 'preserve']
+      fail_msg: >-
+        restore_type must be one of: default, delta, preserve.
+        Got '{{ restore_type | default('default') }}'.
+
+# ---------------------------------------------------------------------
+# Pick the recovery host (depends on topology + current leader).
+# ---------------------------------------------------------------------
+
+- name: Resolve recovery host
+  hosts: "{{ groups['postgres_primary'] | default([]) | first | default(groups['postgres_servers'] | default(['localhost']) | first) }}"
+  become: true
+  gather_facts: true
+  tasks:
+  - name: Discover current Patroni leader (HA only)
+    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    ansible.builtin.command:
+      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+    register: _rst_list_pre
+    changed_when: false
+    failed_when: false
+
+  - name: Refuse unless the Patroni cluster is currently paused
+    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    ansible.builtin.assert:
+      that:
+      - _rst_list_pre.rc == 0
+      - (_rst_list_pre.stdout | from_json
+         | map(attribute='Pause') | select | list | length) > 0
+      fail_msg: >-
+        Patroni cluster is not paused. Run
+        `patronictl -c /etc/patroni/patroni.yml pause --wait
+        {{ patroni_scope | default('pgclerk') }}` on the leader, then
+        re-run this playbook. Resume is also a manual step at the end.
+
+  - name: Compute Patroni leader (when HA)
+    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    ansible.builtin.set_fact:
+      _rst_patroni_leader: >-
+        {{ (_rst_list_pre.stdout | from_json
+            | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
+            | list | first | default({})).Member | default('') }}
+
+  - name: Decide the recovery host
+    ansible.builtin.set_fact:
+      _rst_recovery_host: >-
+        {{ restore_recovery_host
+           | default(_rst_patroni_leader)
+           | default(groups['postgres_primary'] | default([]) | first)
+           | default(inventory_hostname) }}
+
+  - name: Stash recovery host as a transient group
+    ansible.builtin.add_host:
+      name: "{{ _rst_recovery_host }}"
+      groups: _rst_recovery_host
+
+  - name: Surface restore plan
+    ansible.builtin.debug:
+      msg:
+      - "Restore plan"
+      - "  Stanza         : {{ restore_stanza }}"
+      - "  Target         : {{ restore_target | default('latest') }}"
+      - "  Target value   : {{ restore_target_value | default('-') }}"
+      - "  Timeline       : {{ restore_timeline | default('current') }}"
+      - "  Restore type   : {{ restore_type | default('default') }}"
+      - "  Recovery host  : {{ _rst_recovery_host }}"
+      - "  Topology       : {{ postgresql_ha_mode | default('standalone') }}"
+
+# ---------------------------------------------------------------------
+# Patroni mode: stop patroni on every node so nothing fights the restore.
+# Uses serial: 1 so we don't see a thundering herd if anything stalls.
+# ---------------------------------------------------------------------
+
+- name: Stop Patroni on all members (HA only)
+  hosts: postgres_servers
+  become: true
+  gather_facts: true
+  serial: 1
+  tasks:
+  - name: Stop patroni.service
+    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    ansible.builtin.systemd:
+      name: patroni.service
+      state: stopped
+
+# ---------------------------------------------------------------------
+# Run the actual restore on the recovery host.
+# ---------------------------------------------------------------------
+
+- name: Run pgBackRest restore on the recovery host
+  hosts: _rst_recovery_host
+  become: true
+  gather_facts: true
+  tasks:
+  - name: Resolve OS variant + per-OS PG paths
+    ansible.builtin.set_fact:
+      _rst_os_variant: >-
+        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+           else ansible_facts['os_family'] }}
+
+  - name: Load postgresql OS-specific variables
+    ansible.builtin.include_vars:
+      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _rst_os_variant }}.yml"
+      name: _rst_pg_vars
+
+  - name: Stop postgresql service (standalone only; Patroni already stopped)
+    when: (postgresql_ha_mode | default('standalone')) == 'standalone'
+    ansible.builtin.systemd:
+      name: "{{ _rst_pg_vars.postgresql_service }}"
+      state: stopped
+
+  - name: Capture restore start time
+    ansible.builtin.set_fact:
+      _rst_t0: "{{ ansible_date_time.iso8601 }}"
+
+  - name: Wipe pg_wal/* before delta restore (opt-in)
+    when:
+    - restore_wipe_wal | default(false) | bool
+    - (restore_type | default('default')) == 'delta'
+    ansible.builtin.shell: |
+      set -euo pipefail
+      shopt -s dotglob nullglob
+      rm -rf -- {{ _rst_pg_vars.postgresql_data_dir }}/pg_wal/*
+    args:
+      executable: /bin/bash
+    changed_when: true
+
+  - name: Build pgBackRest restore argv
+    ansible.builtin.set_fact:
+      _rst_argv: >-
+        {{
+          ['pgbackrest',
+           '--stanza=' ~ restore_stanza,
+           '--log-level-console=info']
+          + (['--delta'] if (restore_type | default('default')) == 'delta' else [])
+          + (['--type=' ~ ('time' if (restore_target | default('latest')) == 'time'
+                          else ('name' if (restore_target | default('latest')) == 'name'
+                          else ('xid'  if (restore_target | default('latest')) == 'xid'
+                          else 'default')))])
+          + (['--target=' ~ restore_target_value]
+              if (restore_target | default('latest')) in ['time', 'name', 'xid']
+              else [])
+          + (['--timeline=' ~ restore_timeline]
+              if (restore_timeline | default('current')) != 'current'
+              else [])
+          + ['restore']
+        }}
+
+  - name: Surface the exact pgbackrest invocation
+    ansible.builtin.debug:
+      var: _rst_argv
+
+  - name: Run pgBackRest restore
+    become: true
+    become_user: postgres
+    ansible.builtin.command:
+      argv: "{{ _rst_argv }}"
+    register: _rst_run
+    changed_when: true
+
+  - name: Show pgbackrest restore output
+    ansible.builtin.debug:
+      var: _rst_run.stdout_lines
+
+  - name: Capture restore stop time
+    ansible.builtin.set_fact:
+      _rst_t1: "{{ ansible_date_time.iso8601 }}"
+
+  # --- Standalone: bring PG back online ---------------------------------
+  - name: Start postgresql (standalone only)
+    when: (postgresql_ha_mode | default('standalone')) == 'standalone'
+    ansible.builtin.systemd:
+      name: "{{ _rst_pg_vars.postgresql_service }}"
+      state: started
+
+  - name: Wait for PG to accept connections (standalone only)
+    when: (postgresql_ha_mode | default('standalone')) == 'standalone'
+    ansible.builtin.wait_for:
+      host: 127.0.0.1
+      port: "{{ postgresql_port | default(5432) }}"
+      timeout: 120
+
+  - name: Probe recovery state (standalone only)
+    when: (postgresql_ha_mode | default('standalone')) == 'standalone'
+    become: true
+    become_user: postgres
+    community.postgresql.postgresql_query:
+      db: postgres
+      query: >-
+        SELECT pg_is_in_recovery() AS in_recovery,
+               pg_last_wal_replay_lsn() AS last_replay_lsn,
+               now() AS server_now
+    register: _rst_probe
+    failed_when: false
+
+  - name: Surface restore verdict
+    ansible.builtin.debug:
+      msg:
+      - "########################################################################"
+      - "pgBackRest restore complete on {{ inventory_hostname }}"
+      - "  Stanza        : {{ restore_stanza }}"
+      - "  Target        : {{ restore_target | default('latest') }} {{ restore_target_value | default('') }}"
+      - "  Timeline      : {{ restore_timeline | default('current') }}"
+      - "  Restore type  : {{ restore_type | default('default') }}"
+      - "  Started       : {{ _rst_t0 }}"
+      - "  Stopped       : {{ _rst_t1 }}"
+      - "  Probe         : {{ (_rst_probe.query_result | default([{}])) | first if _rst_probe is defined else 'skipped (Patroni mode)' }}"
+      - "  Topology      : {{ postgresql_ha_mode | default('standalone') }}"
+      - "  Expected downtime window: full data dir size / restore I/O bandwidth"
+      - "########################################################################"
+
+# ---------------------------------------------------------------------
+# Patroni mode: print the manual follow-up. We deliberately do NOT resume
+# automatically; the DBA must confirm the new leader is healthy first.
+# ---------------------------------------------------------------------
+
+- name: Print Patroni follow-up instructions
+  hosts: localhost
+  gather_facts: false
+  tasks:
+  - name: DBA notice -- HA follow-up
+    when: (hostvars[groups['postgres_servers'] | first].postgresql_ha_mode | default('standalone')) == 'patroni'
+    ansible.builtin.debug:
+      msg:
+      - "########################################################################"
+      - "Patroni follow-up (manual, on purpose):"
+      - "  1. Start patroni.service on the recovery host:"
+      - "       systemctl start patroni"
+      - "     and confirm it becomes Leader in:"
+      - "       patronictl -c /etc/patroni/patroni.yml list"
+      - "  2. Resume the cluster from any node:"
+      - "       patronictl -c /etc/patroni/patroni.yml resume --wait \\"
+      - "         {{ patroni_scope | default('pgclerk') }}"
+      - "  3. For each surviving replica, reinit from the new leader:"
+      - "       patronictl -c /etc/patroni/patroni.yml reinit \\"
+      - "         {{ patroni_scope | default('pgclerk') }} <replica_host>"
+      - "     (or run playbooks/maintenance/replica-rebuild.yml --limit <host>)"
+      - "########################################################################"

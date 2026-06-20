@@ -1,0 +1,41 @@
+---
+# HashiCorp Vault endpoint. Typically https://vault.example.com:8200.
+# Mandatory; the role asserts it is non-empty.
+vault_addr: ""
+
+# AppRole credentials. The control node (or whoever runs this role) holds
+# them; the role uses community.hashi_vault.vault_login to exchange them
+# for a short-lived client token and then reads each secret entry under
+# vault_secrets[]. role_id is usually safe to keep in inventory; secret_id
+# must be supplied at run time (-e vault_secret_id=... or via Semaphore
+# secret injection).
+vault_role_id: ""
+vault_secret_id: ""
+
+# Vault Enterprise namespace. Leave empty for Vault OSS.
+vault_namespace: ""
+
+# KV v2 mount point. The default is the path Vault uses out of the box
+# (`secret/`); override if the operator mounted KV v2 elsewhere.
+vault_mount_point: "secret"
+
+# Secret entries to fetch. Each item:
+#
+#   - name           : human-readable label for logs (NOT logged at no_log).
+#     path           : KV v2 path relative to vault_mount_point.
+#                      e.g. "pgclerk/dev/appuser" for secret/pgclerk/dev/appuser.
+#     field          : key inside the KV v2 data blob (e.g. "password").
+#     register_var   : Ansible fact name to set with the value.
+#                      e.g. "appuser_password" -- group_vars / playbooks then
+#                      consume {{ appuser_password }} just like with @secrets.yml.
+#     no_log         : default true. Set false only when debugging the role.
+#
+# Example (typical pgclerk use case):
+#
+#   vault_secrets:
+#   - { name: "appuser",         path: "pgclerk/dev/appuser",         field: "password", register_var: "appuser_password" }
+#   - { name: "patroni admin",   path: "pgclerk/dev/patroni",         field: "admin",    register_var: "patroni_admin_password" }
+#   - { name: "pgbackrest S3",   path: "pgclerk/dev/pgbackrest-s3",   field: "key",      register_var: "pgbackrest_s3_key" }
+#
+# The role asserts each entry has the required keys.
+vault_secrets: []

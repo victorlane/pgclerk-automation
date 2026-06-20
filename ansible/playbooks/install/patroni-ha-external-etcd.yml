@@ -1,17 +1,39 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         pg-ha-patroni-ext
-# title:       PostgreSQL · HA with Patroni (external etcd)
-# category:    install
-# surface:     postgres
-# destructive: False
+# Atom: Patroni HA cluster (embedded etcd by default). Inventory must define
+# postgres_primary + postgres_replicas. For external etcd, set
+# patroni_dcs_inventory_group=etcd_servers in extra-vars and populate the
+# etcd_servers group.
+- name: Etcd quorum (embedded on PG nodes by default)
+  hosts: "{{ patroni_dcs_inventory_group | default('postgres_servers') }}"
+  become: true
+  gather_facts: true
+  roles:
+    - role: os_baseline
+    - role: etcd
 
-- name: "PostgreSQL · HA with Patroni (external etcd)"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
-  gather_facts: false
-  tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'pg-ha-patroni-ext'"
-          - "Replace ansible/playbooks/install/patroni-ha-external-etcd.yml with the real playbook."
+- name: PostgreSQL packages on PG nodes
+  hosts: postgres_servers
+  become: true
+  gather_facts: true
+  vars:
+    postgresql_ha_mode: patroni
+  roles:
+    - role: os_baseline
+    - role: postgresql
+
+- name: Patroni leader
+  hosts: postgres_primary
+  become: true
+  serial: 1
+  vars:
+    postgresql_ha_mode: patroni
+  roles:
+    - role: patroni
+
+- name: Patroni replicas
+  hosts: postgres_replicas
+  become: true
+  vars:
+    postgresql_ha_mode: patroni
+  roles:
+    - role: patroni

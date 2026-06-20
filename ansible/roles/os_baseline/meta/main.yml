@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  author: pgclerk
+  description: Dispatches to the right per-OS-family baseline role at runtime.
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions: ["8", "9"]
+  - name: Amazon
+    versions: ["2023"]
+  - name: Debian
+    versions: ["bookworm", "trixie"]
+  - name: Ubuntu
+    versions: ["jammy", "noble"]
+  galaxy_tags:
+  - baseline
+  - dispatcher
+
+dependencies: []

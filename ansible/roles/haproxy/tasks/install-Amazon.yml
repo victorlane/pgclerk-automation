@@ -1,0 +1,7 @@
+---
+# Amazon Linux 2023 ships haproxy in its main repo -- no extra repo or
+# EPEL toggle needed.
+- name: Install haproxy via dnf
+  ansible.builtin.dnf:
+    name: haproxy
+    state: present

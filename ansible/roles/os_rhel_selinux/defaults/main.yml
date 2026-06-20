@@ -1,0 +1,13 @@
+---
+# If set to enforcing/permissive/disabled the role flips SELinux to that
+# state. Empty string = leave the running mode alone.
+selinux_state: ""
+
+# Persistent file contexts. Each item:
+#   { target: '/srv/foo(/.*)?', setype: 'httpd_sys_content_t', state: present }
+# When a fcontext changes, restorecon -Rv is run on the directory portion
+# of `target` (the leading path before the regex tail).
+selinux_fcontexts: []
+
+# SELinux booleans, e.g. { httpd_can_network_connect: on }.
+selinux_booleans: {}

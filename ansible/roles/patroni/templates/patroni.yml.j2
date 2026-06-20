@@ -1,0 +1,112 @@
+---
+# {{ ansible_managed }}
+# Patroni configuration for cluster scope "{{ patroni_scope }}".
+# Owned by postgres:postgres, mode 0640 -- contains cleartext passwords.
+
+scope: {{ patroni_scope }}
+name: {{ inventory_hostname }}
+
+restapi:
+  listen: 0.0.0.0:{{ patroni_restapi_port }}
+  connect_address: {{ ansible_facts.default_ipv4.address }}:{{ patroni_restapi_port }}
+
+etcd3:
+{% if patroni_etcd_use_tls | bool %}
+  protocol: https
+  cacert: /etc/patroni/etcd-tls/ca.crt
+  cert: /etc/patroni/etcd-tls/client.crt
+  key: /etc/patroni/etcd-tls/client.key
+{% if etcd_tls_skip_verify | default(false) | bool %}
+  # Break-glass: do not verify etcd server certs. Dev only.
+  verify: false
+{% endif %}
+{% endif %}
+  hosts:
+{% for host in groups[patroni_dcs_inventory_group] %}
+  - {{ hostvars[host].ansible_host | default(host) }}:2379
+{% endfor %}
+
+bootstrap:
+  dcs:
+    ttl: {{ patroni_ttl }}
+    loop_wait: {{ patroni_loop_wait }}
+    retry_timeout: {{ patroni_retry_timeout }}
+    maximum_lag_on_failover: {{ patroni_max_lag_on_failover }}
+    synchronous_mode: {{ patroni_synchronous_mode | bool | lower }}
+    synchronous_mode_strict: {{ patroni_synchronous_mode_strict | bool | lower }}
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        max_connections: {{ postgresql_max_connections }}
+        shared_buffers: {{ postgresql_shared_buffers | default(_pg_shared_buffers, true) }}
+        effective_cache_size: {{ postgresql_effective_cache_size | default(_pg_effective_cache, true) }}
+        maintenance_work_mem: {{ postgresql_maintenance_work_mem | default(_pg_maint_work_mem, true) }}
+        work_mem: {{ postgresql_work_mem | default(_pg_work_mem, true) }}
+        shared_preload_libraries: '{{ postgresql_shared_preload_libraries | join(",") }}'
+        password_encryption: scram-sha-256
+        log_destination: stderr
+        logging_collector: 'on'
+        log_directory: '{{ postgresql_log_dirname }}'
+        log_filename: 'postgresql-%Y-%m-%d_%H%M%S.log'
+        log_line_prefix: '%m [%p] %q%u@%d '
+        log_timezone: UTC
+        timezone: UTC
+        datestyle: 'iso, mdy'
+        default_text_search_config: 'pg_catalog.english'
+
+  initdb:
+  - encoding: UTF8
+  - locale-provider: icu
+  - icu-locale: {{ postgresql_icu_locale }}
+  - data-checksums
+
+  pg_hba:
+{% for entry in postgresql_hba_entries %}
+{%   if entry.type == 'local' %}
+  - local {{ entry.database }} {{ entry.user }} {{ entry.auth_method }}
+{%   else %}
+  - {{ entry.type }} {{ entry.database }} {{ entry.user }} {{ entry.address }} {{ entry.auth_method }}
+{%   endif %}
+{% endfor %}
+  - host replication replicator {{ patroni_replication_cidr }} md5
+
+  users:
+    admin:
+      password: {{ patroni_admin_password }}
+      options:
+      - createrole
+      - createdb
+      - superuser
+
+postgresql:
+  listen: 0.0.0.0:{{ postgresql_port }}
+  connect_address: {{ ansible_facts.default_ipv4.address }}:{{ postgresql_port }}
+  data_dir: {{ postgresql_data_dir }}
+  bin_dir: {{ postgresql_bin_path }}
+  pgpass: /tmp/pgpass0
+  authentication:
+    replication:
+      username: replicator
+      password: {{ patroni_replicator_password }}
+    superuser:
+      username: postgres
+      password: {{ patroni_superuser_password }}
+    rewind:
+      username: rewind_user
+      password: {{ patroni_rewind_password }}
+  parameters:
+    unix_socket_directories: '/var/run/postgresql,/tmp'
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false
+
+watchdog:
+  mode: {{ patroni_watchdog_mode }}
+{% if patroni_watchdog_mode != 'off' %}
+  device: {{ patroni_watchdog_device }}
+  safety_margin: {{ patroni_watchdog_safety_margin }}
+{% endif %}

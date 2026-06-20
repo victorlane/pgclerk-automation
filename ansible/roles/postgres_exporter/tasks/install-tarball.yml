@@ -1,0 +1,71 @@
+---
+# Resolve upstream tarball arch. The release artefact is named
+# postgres_exporter-<ver>.linux-<arch>.tar.gz with arch in (amd64, arm64).
+- name: Resolve tarball architecture
+  ansible.builtin.set_fact:
+    _pgexp_tarball_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
+    _pgexp_release_base: "https://github.com/prometheus-community/postgres_exporter/releases/download"
+
+- name: Ensure system group exists
+  ansible.builtin.group:
+    name: "{{ postgres_exporter_group }}"
+    system: true
+    state: present
+
+- name: Ensure system user exists
+  ansible.builtin.user:
+    name: "{{ postgres_exporter_user }}"
+    group: "{{ postgres_exporter_group }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ postgres_exporter_install_dir }}"
+    create_home: false
+    state: present
+
+- name: Check whether the pinned binary is already installed
+  ansible.builtin.stat:
+    path: "{{ postgres_exporter_install_dir }}/postgres_exporter"
+  register: _pgexp_binary
+
+- name: Download and extract postgres_exporter tarball
+  when: not _pgexp_binary.stat.exists
+  block:
+  - name: Create install directory
+    ansible.builtin.file:
+      path: "{{ postgres_exporter_install_dir }}"
+      state: directory
+      owner: root
+      group: root
+      mode: "0755"
+
+  # Upstream does not publish .sha256 sidecars per asset on the release page
+  # (only release-wide source checksums). We rely on TLS to GitHub and pin
+  # the version; if you need stronger integrity guarantees, mirror the
+  # tarball internally and supply its sha256 via postgres_exporter_sha256
+  # in your group_vars (and add a checksum: arg below).
+  - name: Fetch postgres_exporter tarball
+    ansible.builtin.get_url:
+      url: "{{ _pgexp_release_base }}/v{{ postgres_exporter_version }}/postgres_exporter-{{ postgres_exporter_version }}.linux-{{ _pgexp_tarball_arch }}.tar.gz"
+      dest: "/tmp/postgres_exporter-{{ postgres_exporter_version }}.tar.gz"
+      mode: "0644"
+
+  - name: Extract postgres_exporter tarball
+    ansible.builtin.unarchive:
+      src: "/tmp/postgres_exporter-{{ postgres_exporter_version }}.tar.gz"
+      dest: "{{ postgres_exporter_install_dir }}"
+      remote_src: true
+      extra_opts: [ "--strip-components=1" ]
+      owner: root
+      group: root
+
+  - name: Remove tarball
+    ansible.builtin.file:
+      path: "/tmp/postgres_exporter-{{ postgres_exporter_version }}.tar.gz"
+      state: absent
+
+- name: Symlink postgres_exporter into /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ postgres_exporter_install_dir }}/postgres_exporter"
+    dest: "{{ postgres_exporter_bin_path }}"
+    state: link
+    force: true

@@ -1,0 +1,105 @@
+---
+# Pull pgclerk runtime secrets from HashiCorp Vault (KV v2) and expose
+# them as Ansible facts -- a drop-in replacement for `-e @secrets.yml`.
+#
+# Flow:
+#   1. Assert the community.hashi_vault collection is installed (it is
+#      listed in requirements.yml but the role's consumer may have skipped
+#      `ansible-galaxy install -r requirements.yml`).
+#   2. Assert vault_addr + vault_role_id + vault_secret_id are non-empty.
+#   3. AppRole login -> short-lived client token.
+#   4. For each vault_secrets[] entry, vault_kv2_get and set_fact the
+#      named field as the requested fact, with no_log=true.
+#
+# The role is no-ops when vault_secrets is empty -- safe to include
+# unconditionally in plays that may or may not need Vault on a given
+# environment (dev = file-based secrets, prod = Vault).
+
+- name: Assert community.hashi_vault is installed
+  ansible.builtin.assert:
+    that:
+    - "'community.hashi_vault' in (lookup('ansible.builtin.pipe',
+         'ansible-galaxy collection list 2>/dev/null',
+         errors='ignore') | default(''))"
+    fail_msg: >-
+      The community.hashi_vault collection is required.
+      Install with: ansible-galaxy collection install -r requirements.yml
+
+- name: Skip when no secrets requested
+  when: (vault_secrets | length) == 0
+  ansible.builtin.meta: end_host
+
+- name: Assert vault_addr is configured
+  ansible.builtin.assert:
+    that:
+    - vault_addr is defined
+    - vault_addr | length > 0
+    fail_msg: "vault_addr is required (e.g. https://vault.example.com:8200)."
+
+- name: Assert AppRole credentials are configured
+  ansible.builtin.assert:
+    that:
+    - vault_role_id is defined
+    - vault_role_id | length > 0
+    - vault_secret_id is defined
+    - vault_secret_id | length > 0
+    fail_msg: >-
+      vault_role_id and vault_secret_id are required. Inject them via
+      Semaphore secrets or -e at the command line; do NOT commit them.
+
+- name: Assert each vault_secrets entry has the required keys
+  ansible.builtin.assert:
+    that:
+    - item.name is defined
+    - item.path is defined
+    - item.field is defined
+    - item.register_var is defined
+    fail_msg: >-
+      vault_secrets[] entries must define name, path, field, register_var.
+      Got: {{ item }}
+  loop: "{{ vault_secrets }}"
+  loop_control:
+    label: "{{ item.name | default('<unnamed>') }}"
+
+# AppRole login.  Returns a wrapped token we re-use for each kv2_get.
+# no_log because the response body contains the client token.
+- name: Vault AppRole login
+  community.hashi_vault.vault_login:
+    url: "{{ vault_addr }}"
+    namespace: "{{ vault_namespace | default(omit, true) }}"
+    auth_method: approle
+    role_id: "{{ vault_role_id }}"
+    secret_id: "{{ vault_secret_id }}"
+  register: _vault_login
+  no_log: true
+
+# One kv2_get per entry.  We set_fact the value under the operator-chosen
+# fact name (register_var) so the rest of the play just references e.g.
+# {{ appuser_password }} without knowing where it came from.
+- name: Read secret from Vault and register as a fact
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ vault_addr }}"
+    namespace: "{{ vault_namespace | default(omit, true) }}"
+    auth_method: token
+    token: "{{ _vault_login.login.auth.client_token }}"
+    engine_mount_point: "{{ vault_mount_point }}"
+    path: "{{ item.path }}"
+  loop: "{{ vault_secrets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _vault_reads
+  no_log: true
+
+- name: Expose each Vault value as an Ansible fact
+  ansible.builtin.set_fact:
+    "{{ item.item.register_var }}": "{{ item.secret[item.item.field] }}"
+  loop: "{{ _vault_reads.results }}"
+  loop_control:
+    label: "{{ item.item.name }} -> {{ item.item.register_var }}"
+  no_log: "{{ item.item.no_log | default(true) }}"
+
+- name: Surface which Vault-sourced facts are now available
+  ansible.builtin.debug:
+    msg: >-
+      Loaded {{ vault_secrets | length }} secret(s) from Vault into facts:
+      {{ vault_secrets | map(attribute='register_var') | list | join(', ') }}

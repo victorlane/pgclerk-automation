@@ -1,0 +1,47 @@
+---
+# Pinned upstream version. RHEL/Debian get whatever the distro package ships
+# unless postgres_exporter_install_from_tarball=true; AL2023 always uses the
+# binary tarball from this version.
+postgres_exporter_version: "0.15.0"
+
+# Force the tarball install path on RHEL/Debian too (useful when the distro
+# package lags behind upstream or is missing). AL2023 ignores this flag --
+# it always installs from the tarball because no package is available.
+postgres_exporter_install_from_tarball: false
+
+# Listen address. Default loopback-only; expose by setting this to
+# 0.0.0.0:9187 (and opening the firewall in os_baseline_firewall_rules).
+postgres_exporter_listen_address: "127.0.0.1:9187"
+
+# System user/group the exporter runs as. Distro packages on RHEL/Debian
+# already create these names; we reuse them when present.
+postgres_exporter_user: postgres_exporter
+postgres_exporter_group: postgres_exporter
+
+# Layout for tarball installs and config that lives outside the package.
+postgres_exporter_install_dir: "/opt/postgres_exporter-{{ postgres_exporter_version }}"
+postgres_exporter_bin_path: "/usr/local/bin/postgres_exporter"
+postgres_exporter_config_dir: "/etc/postgres_exporter"
+postgres_exporter_env_file: "{{ postgres_exporter_config_dir }}/postgres_exporter.env"
+
+# SQL role used by the exporter. pg_monitor (PG10+) + pg_read_all_stats
+# together cover replication lag, bgwriter, pg_stat_statements, and the
+# per-table/per-index views that pg_monitor alone doesn't expose.
+postgres_exporter_sql_role: postgres_exporter
+postgres_exporter_password: "changeme-exporter"
+
+# Local Unix socket connection. RHEL puts the socket under /var/run/postgresql
+# (PGDG default); Debian under /var/run/postgresql; AL2023 under /var/run/postgresql.
+# All three converge on this path, so we hardcode it. Override
+# postgres_exporter_data_source_name to use a TCP DSN if you ever need one.
+postgres_exporter_data_source_name: >-
+  user={{ postgres_exporter_sql_role }}
+  password={{ postgres_exporter_password }}
+  host=/var/run/postgresql
+  port={{ postgresql_port | default(5432) }}
+  dbname=postgres
+  sslmode=disable
+
+# Extra CLI flags passed to the exporter. Keep the defaults safe -- the
+# exporter's auto-discovery covers all useful collectors for an MSP setup.
+postgres_exporter_extra_flags: []

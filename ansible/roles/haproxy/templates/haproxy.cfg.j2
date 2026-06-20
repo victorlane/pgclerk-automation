@@ -1,0 +1,66 @@
+# {{ ansible_managed }}
+# HAProxy configuration -- managed by the haproxy Ansible role.
+# Manual edits will be overwritten on the next role run.
+#
+# Pattern: Patroni-aware health checks. Each backend's "up" state is
+# decided by HAProxy probing Patroni's REST API:
+#   GET /master  -> 200 only on the current leader
+#   GET /replica -> 200 only on a healthy, eligible replica
+# This means HAProxy follows Patroni's view of the world rather than
+# making its own promotion/demotion decisions -- exactly the right split.
+
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    daemon
+    maxconn 4096
+
+defaults
+    log global
+    mode tcp
+    option tcplog
+    option dontlognull
+    timeout connect 5s
+    timeout client 1h
+    timeout server 1h
+    timeout check {{ haproxy_check_timeout_ms }}ms
+
+# Stats listener -- plain HTTP. Front this with the OS firewall or bind
+# to a management interface; HAProxy itself does no auth here.
+listen stats
+    bind *:{{ haproxy_stats_port }}
+    mode http
+    stats enable
+    stats uri /
+    stats refresh 5s
+    stats show-legends
+    stats show-node
+
+# Read-write listener. Probes Patroni /master on each backend; only the
+# current leader returns 200, so client traffic on this port reaches
+# exactly one Postgres node at a time.
+listen postgres_primary
+    bind *:{{ haproxy_floating_port }}
+    option httpchk OPTIONS /master
+    http-check expect status 200
+    default-server inter {{ haproxy_inter_check_ms }}ms fall 3 rise 2 on-marked-down shutdown-sessions
+{% for h in groups[haproxy_cluster_group] %}
+    server {{ h }} {{ hostvars[h].ansible_host | default(h) }}:5432 maxconn 100 check port {{ haproxy_patroni_rest_port }}
+{% endfor %}
+
+{% if haproxy_enable_readonly | bool %}
+# Read-only listener. Probes /replica -- every healthy replica returns
+# 200, so client traffic load-balances across all eligible replicas.
+# When the cluster has no replicas, this listener has no live backends
+# and connections fail fast; that is intentional (read traffic should
+# not silently spill to the primary).
+listen postgres_readonly
+    bind *:{{ haproxy_readonly_port }}
+    option httpchk OPTIONS /replica
+    http-check expect status 200
+    default-server inter {{ haproxy_inter_check_ms }}ms fall 3 rise 2 on-marked-down shutdown-sessions
+    balance roundrobin
+{% for h in groups[haproxy_cluster_group] %}
+    server {{ h }} {{ hostvars[h].ansible_host | default(h) }}:5432 maxconn 100 check port {{ haproxy_patroni_rest_port }}
+{% endfor %}
+{% endif %}

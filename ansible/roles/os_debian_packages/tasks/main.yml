@@ -1,0 +1,17 @@
+---
+- name: Refresh apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: "{{ packages_apt_cache_valid_time }}"
+
+- name: Install common packages
+  ansible.builtin.apt:
+    name: "{{ packages_common }}"
+    state: present
+  when: packages_common | length > 0
+
+- name: Install extra packages
+  ansible.builtin.apt:
+    name: "{{ packages_extra }}"
+    state: present
+  when: packages_extra | length > 0

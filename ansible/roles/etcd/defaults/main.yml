@@ -1,0 +1,84 @@
+---
+etcd_version: "3.5.16"
+etcd_arch: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}"
+
+# Inventory group whose members form the etcd cluster. The playbook decides
+# whether this is the postgres group (embedded DCS) or a dedicated etcd group
+# (external DCS); the role itself does not care.
+etcd_inventory_group: "postgres_servers"
+
+etcd_install_dir: "/opt/etcd-{{ etcd_version }}"
+etcd_data_dir: "/var/lib/etcd"
+etcd_config_dir: "/etc/etcd"
+
+# Block device to dedicate to etcd_data_dir.  When set (e.g. "/dev/sdg" or
+# "/dev/nvme1n1"), the role:
+#   1. mkfs.xfs the device (only when it has no filesystem signature)
+#   2. mounts it at etcd_data_dir
+#   3. writes an fstab entry by UUID
+# Leave empty to skip the disk-mount logic entirely -- useful when the
+# operator already mounted the right disk via cloud-init / kickstart / a
+# storage-management tool, or when sharing the root disk is acceptable
+# (dev environments, single-tenant boxes).
+#
+# Lesson learned (docs/lessons-learned.md #1): etcd fsyncs on the same
+# disk as PG WAL writes flap the etcd leader under DB load.  Production
+# embedded-etcd deployments should give etcd its own filesystem.
+etcd_data_device: ""
+etcd_data_fstype: "xfs"
+etcd_data_mount_options: "noatime,nodiratime"
+
+etcd_user: etcd
+etcd_group: etcd
+
+etcd_client_port: 2379
+etcd_peer_port: 2380
+
+etcd_listen_ip: "{{ ansible_facts.default_ipv4.address }}"
+etcd_advertise_ip: "{{ etcd_listen_ip }}"
+
+etcd_cluster_token: pgclerk-etcd
+
+# Upstream release URL. Override to pin to an internal mirror.
+etcd_download_url: >-
+  https://github.com/etcd-io/etcd/releases/download/v{{ etcd_version }}/etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz
+
+# TLS configuration.
+#
+# v1.0 of this role shipped plaintext etcd. From v1.1 the default is TLS on:
+# the role generates a per-cluster CA the first time it runs on the primary
+# host, then issues per-node server, peer, and client certificates from it.
+# Patroni gets a client cert + key + CA bundle so it can authenticate
+# against etcd's --client-cert-auth=true.
+#
+# Override with operator-supplied PKI by setting:
+#   etcd_tls_ca_cert      - path on the controller to a CA cert (PEM)
+#   etcd_tls_ca_key       - path on the controller to a CA key  (PEM)
+# When BOTH are set the role uses them; otherwise it generates and
+# persists a CA at etcd_tls_local_pki_dir on the controller.
+etcd_enable_tls: true
+etcd_tls_cert_dir: "{{ etcd_config_dir }}/tls"
+
+# Caller-supplied CA (optional). When unset, a per-cluster CA is generated.
+etcd_tls_ca_cert: ""
+etcd_tls_ca_key: ""
+
+# Where the controller stores the generated CA (and any reissued certs).
+# Persisted so re-runs do not rotate the CA on every play.
+etcd_tls_local_pki_dir: "{{ playbook_dir | default('.') }}/.pgclerk-pki/etcd-{{ etcd_cluster_token }}"
+
+# CA + cert lifetimes (days). 10 years for the CA, 825 days for leaf certs.
+etcd_tls_ca_days: 3650
+etcd_tls_cert_days: 825
+
+# Common Name + Organisation on the generated CA.
+etcd_tls_ca_common_name: "pgclerk etcd CA ({{ etcd_cluster_token }})"
+etcd_tls_ca_organisation: "pgclerk"
+
+# Break-glass: skip TLS verification on the etcd client side (Patroni).
+# Useful for dev when the CA cannot be distributed. NEVER set in production.
+etcd_tls_skip_verify: false
+
+# Compatibility flag. Setting etcd_enable_tls=false now emits a deprecation
+# warning task; it remains supported for one release for sites that built
+# their network assuming plaintext on 2379/2380.

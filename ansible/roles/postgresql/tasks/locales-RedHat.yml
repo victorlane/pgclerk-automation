@@ -1,0 +1,20 @@
+---
+- name: Compute effective list of locales to ensure
+  ansible.builtin.set_fact:
+    postgresql_effective_locales: >-
+      {{ (
+           postgresql_locales
+           + (postgresql_databases | map(attribute='lc_collate', default=omit) | list)
+           + (postgresql_databases | map(attribute='lc_ctype',   default=omit) | list)
+         )
+         | reject('equalto', omit) | reject('equalto', None) | reject('equalto', '')
+         | unique | list
+      }}
+
+- name: Install glibc-langpack for each locale's language
+  ansible.builtin.dnf:
+    name: "glibc-langpack-{{ item.split('_')[0] | lower }}"
+    state: present
+  loop: "{{ postgresql_effective_locales }}"
+  # C.UTF-8 ships with glibc, no langpack needed.
+  when: not item.startswith('C.')

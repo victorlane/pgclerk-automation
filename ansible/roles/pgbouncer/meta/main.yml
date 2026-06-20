@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  role_name: pgbouncer
+  author: pgclerk
+  description: Install and configure pgbouncer transaction-mode pooling for PostgreSQL
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions: ["8", "9"]
+  - name: Amazon
+    versions: ["2023"]
+  - name: Debian
+    versions: ["bookworm", "trixie"]
+  - name: Ubuntu
+    versions: ["jammy", "noble"]
+  galaxy_tags:
+  - database
+  - postgresql
+  - pgbouncer
+  - pooling
+
+dependencies: []

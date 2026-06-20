@@ -1,0 +1,31 @@
+---
+# The distro's postgresql unit is enabled by default on some installs. With
+# Patroni in charge of pg_ctl, a second systemd-driven postmaster racing for
+# PGDATA would corrupt the cluster. Mask, don't just disable -- mask survives
+# a well-meaning `systemctl enable`.
+#
+# postgresql_service comes from the postgresql role's per-OS vars file,
+# loaded by main.yml: RHEL/AL2023 = "postgresql-<ver>.service",
+# Debian = "postgresql@<ver>-main.service".
+- name: Disable distro PostgreSQL systemd unit
+  ansible.builtin.systemd:
+    name: "{{ postgresql_service }}"
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Mask distro PostgreSQL systemd unit (Patroni owns PG)
+  ansible.builtin.systemd:
+    name: "{{ postgresql_service }}"
+    masked: true
+  failed_when: false
+
+- name: Flush handlers so patroni.yml + unit changes land before start
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start patroni.service
+  ansible.builtin.systemd:
+    name: patroni.service
+    enabled: true
+    state: started
+    daemon_reload: true

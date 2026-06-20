@@ -1,0 +1,330 @@
+---
+# Bootstrap server-side TLS on a Postgres host.
+#
+# Two source modes:
+#   1. Caller supplies PEM files on the control node:
+#        pg_tls_cert_path  : server certificate (leaf, chain optional).
+#        pg_tls_key_path   : server private key.
+#        pg_tls_ca_path    : CA bundle (optional; for client-cert verify).
+#      The role copies them under PGDATA with the conventional names
+#      server.crt / server.key / root.crt, modes 0644 / 0600 / 0644,
+#      owner postgres.
+#
+#   2. No PEM files supplied: the role generates a self-signed
+#      CA + server cert + key with community.crypto. The cert SAN
+#      covers ansible_hostname plus ansible_host (the IP we connect on).
+#
+# Standalone mode:
+#   The role edits postgresql.conf to set ssl=on + ssl_cert_file /
+#   ssl_key_file / ssl_ca_file, appends hostssl entries to pg_hba.conf
+#   for each CIDR in pg_tls_required_cidrs, and SIGHUPs postgres.
+#
+# Patroni mode:
+#   Same convention as backup-now.yml and verify-backup.yml: we REFUSE
+#   to edit postgresql.conf / pg_hba.conf directly (Patroni owns them)
+#   and instead print the patroni.yml stanza the operator must merge in.
+#
+# Vars:
+#   pg_tls_cert_path           : optional. PEM cert on the control node.
+#   pg_tls_key_path            : optional. PEM key on the control node.
+#   pg_tls_ca_path             : optional. PEM CA bundle on the control node.
+#   pg_tls_required_cidrs      : list of CIDRs that must use hostssl. default [].
+#   pg_tls_force_regen         : bool. default false. Force regenerating the
+#                                self-signed material even if it already exists.
+
+- name: Validate TLS bootstrap parameters
+  hosts: localhost
+  gather_facts: false
+  tasks:
+  - name: Assert key/cert paths are paired (either both or neither)
+    ansible.builtin.assert:
+      that:
+      - (pg_tls_cert_path is defined and pg_tls_key_path is defined)
+        or (pg_tls_cert_path is not defined and pg_tls_key_path is not defined)
+      fail_msg: >-
+        pg_tls_cert_path and pg_tls_key_path must be set together, or both
+        omitted (then a self-signed CA + cert is generated).
+
+  - name: Stat caller-supplied cert (when provided)
+    when: pg_tls_cert_path is defined
+    ansible.builtin.stat:
+      path: "{{ pg_tls_cert_path }}"
+    register: _tls_src_cert
+
+  - name: Stat caller-supplied key (when provided)
+    when: pg_tls_key_path is defined
+    ansible.builtin.stat:
+      path: "{{ pg_tls_key_path }}"
+    register: _tls_src_key
+
+  - name: Assert caller-supplied files exist + non-empty
+    when: pg_tls_cert_path is defined
+    ansible.builtin.assert:
+      that:
+      - _tls_src_cert.stat.exists
+      - _tls_src_cert.stat.size > 0
+      - _tls_src_key.stat.exists
+      - _tls_src_key.stat.size > 0
+      fail_msg: "Caller-supplied cert/key file is missing or empty."
+
+- name: Bootstrap TLS on every Postgres host
+  hosts: postgres_servers
+  become: true
+  gather_facts: true
+  vars:
+    pg_tls_required_cidrs: []
+    pg_tls_force_regen: false
+    _tls_cert_name: server.crt
+    _tls_key_name: server.key
+    _tls_ca_name: root.crt
+  tasks:
+  - name: Resolve OS variant + per-OS PG paths
+    ansible.builtin.set_fact:
+      _tls_os_variant: >-
+        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+           else ansible_facts['os_family'] }}
+
+  - name: Load postgresql OS-specific variables
+    ansible.builtin.include_vars:
+      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _tls_os_variant }}.yml"
+      name: _tls_pg_vars
+
+  - name: Compose target paths
+    ansible.builtin.set_fact:
+      _tls_cert_dest: "{{ _tls_pg_vars.postgresql_data_dir }}/{{ _tls_cert_name }}"
+      _tls_key_dest: "{{ _tls_pg_vars.postgresql_data_dir }}/{{ _tls_key_name }}"
+      _tls_ca_dest: "{{ _tls_pg_vars.postgresql_data_dir }}/{{ _tls_ca_name }}"
+
+  - name: Check for existing cert (idempotency gate)
+    ansible.builtin.stat:
+      path: "{{ _tls_cert_dest }}"
+    register: _tls_existing
+
+  # ----- Path 1: caller-supplied PEMs --------------------------------------
+
+  - name: Copy caller-supplied CA (when provided)
+    when:
+    - pg_tls_ca_path is defined and (pg_tls_ca_path | length) > 0
+    ansible.builtin.copy:
+      src: "{{ pg_tls_ca_path }}"
+      dest: "{{ _tls_ca_dest }}"
+      owner: postgres
+      group: postgres
+      mode: "0644"
+
+  - name: Copy caller-supplied server certificate
+    when: pg_tls_cert_path is defined
+    ansible.builtin.copy:
+      src: "{{ pg_tls_cert_path }}"
+      dest: "{{ _tls_cert_dest }}"
+      owner: postgres
+      group: postgres
+      mode: "0644"
+
+  - name: Copy caller-supplied server key
+    when: pg_tls_key_path is defined
+    ansible.builtin.copy:
+      src: "{{ pg_tls_key_path }}"
+      dest: "{{ _tls_key_dest }}"
+      owner: postgres
+      group: postgres
+      mode: "0600"
+
+  # ----- Path 2: generate self-signed CA + server cert ---------------------
+  #
+  # Only runs when the caller did NOT supply PEMs AND the cert file does
+  # not already exist (or force_regen=true). Material is generated on the
+  # target host directly via community.crypto.
+
+  - name: Compute whether self-signed generation is needed
+    ansible.builtin.set_fact:
+      _tls_need_generate: >-
+        {{ (pg_tls_cert_path is not defined)
+           and ((not _tls_existing.stat.exists) or (pg_tls_force_regen | bool)) }}
+
+  - name: Generate self-signed CA private key
+    when: _tls_need_generate | bool
+    community.crypto.openssl_privatekey:
+      path: "{{ _tls_pg_vars.postgresql_data_dir }}/ca.key"
+      size: 4096
+      type: RSA
+      owner: postgres
+      group: postgres
+      mode: "0600"
+
+  - name: Generate self-signed CA CSR
+    when: _tls_need_generate | bool
+    community.crypto.openssl_csr:
+      path: "{{ _tls_pg_vars.postgresql_data_dir }}/ca.csr"
+      privatekey_path: "{{ _tls_pg_vars.postgresql_data_dir }}/ca.key"
+      common_name: "pgclerk self-signed CA ({{ inventory_hostname }})"
+      basic_constraints:
+      - "CA:TRUE"
+      basic_constraints_critical: true
+      key_usage:
+      - keyCertSign
+      - cRLSign
+      key_usage_critical: true
+      owner: postgres
+      group: postgres
+      mode: "0644"
+
+  - name: Self-sign the CA
+    when: _tls_need_generate | bool
+    community.crypto.x509_certificate:
+      path: "{{ _tls_ca_dest }}"
+      privatekey_path: "{{ _tls_pg_vars.postgresql_data_dir }}/ca.key"
+      csr_path: "{{ _tls_pg_vars.postgresql_data_dir }}/ca.csr"
+      provider: selfsigned
+      selfsigned_not_after: "+3650d"
+      owner: postgres
+      group: postgres
+      mode: "0644"
+
+  - name: Generate server private key
+    when: _tls_need_generate | bool
+    community.crypto.openssl_privatekey:
+      path: "{{ _tls_key_dest }}"
+      size: 2048
+      type: RSA
+      owner: postgres
+      group: postgres
+      mode: "0600"
+
+  - name: Generate server CSR (SAN covers hostname + ansible_host)
+    when: _tls_need_generate | bool
+    community.crypto.openssl_csr:
+      path: "{{ _tls_pg_vars.postgresql_data_dir }}/server.csr"
+      privatekey_path: "{{ _tls_key_dest }}"
+      common_name: "{{ inventory_hostname }}"
+      subject_alt_name: >-
+        {{ ['DNS:' ~ inventory_hostname]
+           + (['DNS:' ~ ansible_hostname] if ansible_hostname is defined else [])
+           + (['IP:'  ~ ansible_host] if (ansible_host is defined
+                                          and (ansible_host | regex_search('^\\d+\\.\\d+\\.\\d+\\.\\d+$'))) else []) }}
+      owner: postgres
+      group: postgres
+      mode: "0644"
+
+  - name: Sign the server certificate with the self-signed CA
+    when: _tls_need_generate | bool
+    community.crypto.x509_certificate:
+      path: "{{ _tls_cert_dest }}"
+      csr_path: "{{ _tls_pg_vars.postgresql_data_dir }}/server.csr"
+      ownca_path: "{{ _tls_ca_dest }}"
+      ownca_privatekey_path: "{{ _tls_pg_vars.postgresql_data_dir }}/ca.key"
+      provider: ownca
+      ownca_not_after: "+825d"
+      owner: postgres
+      group: postgres
+      mode: "0644"
+
+  # ----- Expiry surface ----------------------------------------------------
+
+  - name: Inspect the active server certificate
+    community.crypto.x509_certificate_info:
+      path: "{{ _tls_cert_dest }}"
+    register: _tls_certinfo
+    failed_when: false
+
+  - name: Surface certificate expiry
+    when: _tls_certinfo.not_after is defined
+    ansible.builtin.debug:
+      msg:
+      - "TLS certificate {{ _tls_cert_dest }}"
+      - "  Subject       : {{ _tls_certinfo.subject | default({}) }}"
+      - "  Issuer        : {{ _tls_certinfo.issuer | default({}) }}"
+      - "  Not after     : {{ _tls_certinfo.not_after }}"
+      - "  Days remaining: {{ (((_tls_certinfo.not_after
+                                 | to_datetime('%Y%m%d%H%M%SZ'))
+                                - (ansible_date_time.iso8601
+                                   | to_datetime('%Y-%m-%dT%H:%M:%SZ')))
+                              .days) }}"
+
+  # ----- Standalone: edit conf + pg_hba ------------------------------------
+
+  - name: Refuse Patroni-mode conf edits -- print stanza
+    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    ansible.builtin.debug:
+      msg: |
+        Cluster runs in Patroni mode -- refusing to edit postgresql.conf
+        / pg_hba.conf directly. Merge the following into patroni.yml
+        (then re-apply the patroni role) to pick up TLS:
+
+            bootstrap:
+              dcs:
+                postgresql:
+                  parameters:
+                    ssl: 'on'
+                    ssl_cert_file: '{{ _tls_cert_dest }}'
+                    ssl_key_file:  '{{ _tls_key_dest }}'
+                    ssl_ca_file:   '{{ _tls_ca_dest }}'
+              pg_hba:
+        {% for cidr in pg_tls_required_cidrs %}
+              - hostssl all all {{ cidr }} scram-sha-256
+        {% endfor %}
+
+  - name: Skip remaining conf edits in Patroni mode
+    when: (postgresql_ha_mode | default('standalone')) == 'patroni'
+    ansible.builtin.meta: end_host
+
+  - name: Set ssl = on (standalone)
+    ansible.builtin.lineinfile:
+      path: "{{ _tls_pg_vars.postgresql_conf_path }}"
+      regexp: "^[[:space:]]*ssl[[:space:]]*="
+      line: "ssl = on"
+      owner: postgres
+      group: postgres
+      mode: "0600"
+      create: false
+
+  - name: Set ssl_cert_file (standalone)
+    ansible.builtin.lineinfile:
+      path: "{{ _tls_pg_vars.postgresql_conf_path }}"
+      regexp: "^[[:space:]]*ssl_cert_file[[:space:]]*="
+      line: "ssl_cert_file = '{{ _tls_cert_dest }}'"
+
+  - name: Set ssl_key_file (standalone)
+    ansible.builtin.lineinfile:
+      path: "{{ _tls_pg_vars.postgresql_conf_path }}"
+      regexp: "^[[:space:]]*ssl_key_file[[:space:]]*="
+      line: "ssl_key_file = '{{ _tls_key_dest }}'"
+
+  - name: Set ssl_ca_file (standalone, when CA supplied / generated)
+    when: pg_tls_ca_path is defined or _tls_need_generate | bool
+    ansible.builtin.lineinfile:
+      path: "{{ _tls_pg_vars.postgresql_conf_path }}"
+      regexp: "^[[:space:]]*ssl_ca_file[[:space:]]*="
+      line: "ssl_ca_file = '{{ _tls_ca_dest }}'"
+
+  - name: Append hostssl entries for required CIDRs (standalone)
+    loop: "{{ pg_tls_required_cidrs }}"
+    loop_control:
+      label: "{{ item }}"
+    ansible.builtin.lineinfile:
+      path: "{{ _tls_pg_vars.postgresql_hba_path }}"
+      line: "hostssl all all {{ item }} scram-sha-256"
+      owner: postgres
+      group: postgres
+      mode: "0640"
+      create: false
+
+  - name: Reload postgres (standalone)
+    become_user: postgres
+    community.postgresql.postgresql_query:
+      db: postgres
+      query: "SELECT pg_reload_conf()"
+    register: _tls_reload
+    changed_when: true
+    failed_when: false
+
+  - name: Surface standalone verdict
+    ansible.builtin.debug:
+      msg:
+      - "########################################################################"
+      - "TLS bootstrap (standalone) on {{ inventory_hostname }}"
+      - "  Cert : {{ _tls_cert_dest }}"
+      - "  Key  : {{ _tls_key_dest }}"
+      - "  CA   : {{ _tls_ca_dest if (pg_tls_ca_path is defined or _tls_need_generate | bool) else '<none>' }}"
+      - "  hostssl CIDRs : {{ pg_tls_required_cidrs | default([]) }}"
+      - "########################################################################"

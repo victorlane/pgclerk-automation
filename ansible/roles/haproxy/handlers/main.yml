@@ -1,0 +1,18 @@
+---
+# HAProxy supports "reload" which spawns a new worker and drains the old
+# one without dropping established connections -- the right primitive for
+# a config-only change. Restart is reserved for systemd unit changes
+# (drop-ins) because reload alone does not pick those up.
+- name: Reload haproxy
+  ansible.builtin.service:
+    name: haproxy
+    state: reloaded
+
+- name: Restart haproxy
+  ansible.builtin.service:
+    name: haproxy
+    state: restarted
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true

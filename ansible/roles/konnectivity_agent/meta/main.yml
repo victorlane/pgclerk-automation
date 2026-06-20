@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  author: brinkhorst
+  description: >-
+    Install the pgclerk-konnectivity agent (server or worker mode) on a
+    Linux host. Outbound-only HTTPS long-poll telemetry; no inbound ports.
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions: ['8', '9']
+  - name: Debian
+    versions: ['bookworm']
+  - name: Ubuntu
+    versions: ['jammy', 'noble']
+  - name: Amazon
+    versions: ['2023']
+  galaxy_tags:
+  - pgclerk
+  - konnectivity
+  - postgres
+  - telemetry
+dependencies: []

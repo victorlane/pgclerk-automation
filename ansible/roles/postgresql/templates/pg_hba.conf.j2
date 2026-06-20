@@ -1,0 +1,4 @@
+# TYPE  DATABASE  USER  ADDRESS  METHOD
+{% for e in postgresql_hba_entries %}
+{{ "%-7s"|format(e.type) }} {{ "%-12s"|format(e.database) }} {{ "%-12s"|format(e.user) }} {{ "%-24s"|format(e.address | default('')) }} {{ e.auth_method }}
+{% endfor %}

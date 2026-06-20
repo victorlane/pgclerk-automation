@@ -1,0 +1,17 @@
+[commands]
+upgrade_type = {{ 'security' if updates_apply == 'security' else 'default' }}
+random_sleep = 360
+download_updates = yes
+apply_updates = yes
+reboot = {{ 'when-needed' if updates_reboot | bool else 'never' }}
+
+[emitters]
+emit_via = {{ 'email' if updates_email_to | length > 0 else 'stdio' }}
+
+[email]
+email_from = {{ updates_email_from }}
+email_to = {{ updates_email_to }}
+email_host = {{ updates_email_host }}
+
+[base]
+debuglevel = 1

@@ -1,0 +1,8 @@
+---
+# RHEL PGDG pgbouncer RPM creates a system user/group 'pgbouncer' and ships
+# pgbouncer.service which runs as that user. We render /etc/pgbouncer files
+# owned by that user so the unit can read them at startup.
+pgbouncer_package: pgbouncer
+pgbouncer_user: pgbouncer
+pgbouncer_group: pgbouncer
+pgbouncer_config_dir: /etc/pgbouncer

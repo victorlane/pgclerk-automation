@@ -1,0 +1,47 @@
+---
+# Invoke from a maintenance playbook:
+#   - include_role:
+#       name: updates
+#       tasks_from: run-now
+- name: Refresh apt cache before applying updates
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Apply security updates only
+  ansible.builtin.apt:
+    upgrade: safe
+    only_upgrade: true
+    # apt's "safe" upgrade respects pinning; for security-only we lean on
+    # the unattended-upgrades CLI which knows about the security origin.
+  when: updates_apply == 'security'
+  register: _updates_security
+  failed_when:
+  - _updates_security.failed | default(false)
+
+- name: Apply security updates via unattended-upgrades CLI
+  ansible.builtin.command: unattended-upgrade -v
+  when: updates_apply == 'security'
+  changed_when: true
+  register: _updates_uu
+
+- name: Apply all available updates
+  ansible.builtin.apt:
+    upgrade: dist
+    update_cache: true
+  when: updates_apply == 'default'
+  register: _updates_all
+
+- name: Check whether a reboot is required
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: _needs_restart
+
+- name: Reboot when updates require it
+  ansible.builtin.reboot:
+    msg: "Reboot triggered by os_debian_updates run-now"
+    pre_reboot_delay: 5
+    post_reboot_delay: 30
+    reboot_timeout: 600
+  when:
+  - updates_reboot | bool
+  - _needs_restart.stat.exists

@@ -1,0 +1,18 @@
+[Unit]
+Description=etcd key-value store
+Documentation=https://etcd.io/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User={{ etcd_user }}
+Group={{ etcd_group }}
+ExecStart=/usr/local/bin/etcd --config-file {{ etcd_config_dir }}/etcd.conf.yaml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+NotifyAccess=all
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+---
+# Debian/Ubuntu ship prometheus-postgres-exporter in main. The package drops
+# the binary at /usr/bin/prometheus-postgres-exporter (note: different name
+# from the upstream tarball) and an /etc/default/prometheus-postgres-exporter
+# env file. We ignore the shipped systemd unit and write our own so the
+# config layout matches the other distros.
+postgres_exporter_packages:
+- prometheus-postgres-exporter
+
+postgres_exporter_package_bin: /usr/bin/prometheus-postgres-exporter

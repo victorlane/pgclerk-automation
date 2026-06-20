@@ -1,17 +1,66 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         pg-conf-set
-# title:       PostgreSQL · update conf
-# category:    maintenance
-# surface:     postgres
-# destructive: False
+# Apply an operator-supplied dict of postgresql.conf keys via ALTER SYSTEM,
+# then reload. If any key is restart-required, the playbook stops the
+# Patroni / postgres service in a controlled order (replica first, leader
+# last). Required vars:
+#
+#   postgresql_settings: {param: value, ...}   # the changes
+#
+# This is a thin wrapper that delegates the "is this restart-required?"
+# decision to the catalogue PG ships with -- pg_settings.context = 'postmaster'
+# means restart, anything else reloads cleanly.
 
-- name: "PostgreSQL · update conf"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+- name: Refuse to run without an explicit --limit
+  hosts: localhost
   gather_facts: false
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'pg-conf-set'"
-          - "Replace ansible/playbooks/maintenance/pg-conf-set.yml with the real playbook."
+  - ansible.builtin.assert:
+      that: ansible_limit is defined
+      fail_msg: >-
+        Refusing to push pg conf changes across the entire inventory. Re-run
+        with --limit <host-or-group>.
+
+- name: Apply postgresql settings
+  hosts: postgres_servers
+  become: true
+  gather_facts: true
+  vars:
+    postgresql_settings: {}
+  tasks:
+  - ansible.builtin.assert:
+      that:
+      - postgresql_settings is mapping
+      - postgresql_settings | length > 0
+      fail_msg: "postgresql_settings is required and must be a non-empty dict."
+
+  - name: ALTER SYSTEM SET each parameter
+    community.postgresql.postgresql_set:
+      name: "{{ item.key }}"
+      value: "{{ item.value }}"
+    loop: "{{ postgresql_settings | dict2items }}"
+    register: _setres
+    become_user: postgres
+
+  - name: Inspect restart-required flags
+    community.postgresql.postgresql_query:
+      query: >-
+        SELECT name FROM pg_settings
+        WHERE name = ANY (%(names)s) AND context = 'postmaster'
+      named_args:
+        names: "{{ postgresql_settings.keys() | list }}"
+    register: _restart_q
+    become_user: postgres
+
+  - name: Reload PostgreSQL (covers non-postmaster keys)
+    ansible.builtin.command: pg_ctlcluster {{ postgresql_version | default('17') }} main reload
+    when: _restart_q.query_result | length == 0
+    register: _reload
+    changed_when: _reload.rc == 0
+
+  - name: Notify DBA when a restart is required
+    when: _restart_q.query_result | length > 0
+    ansible.builtin.debug:
+      msg:
+      - "Restart-required parameters changed: {{ _restart_q.query_result | map(attribute='name') | list | join(', ') }}"
+      - "This playbook deliberately does NOT restart. Schedule maint-switchover"
+      - "(HA) or maint-os-update (standalone) inside a maintenance window."

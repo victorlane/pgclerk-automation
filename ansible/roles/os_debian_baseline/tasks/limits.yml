@@ -1,0 +1,11 @@
+---
+- name: Deploy security limits drop-in for {{ baseline_db_user }}
+  community.general.pam_limits:
+    domain: "{{ item.domain }}"
+    limit_type: "{{ item.limit_type }}"
+    limit_item: "{{ item.limit_item }}"
+    value: "{{ item.value }}"
+    dest: "/etc/security/limits.d/90-{{ baseline_db_user }}.conf"
+  loop: "{{ baseline_limits }}"
+  loop_control:
+    label: "{{ item.domain }} {{ item.limit_type }} {{ item.limit_item }}={{ item.value }}"

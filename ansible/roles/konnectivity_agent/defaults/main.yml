@@ -1,0 +1,72 @@
+---
+# =============================================================================
+# Required (no default; the role asserts at run time).
+# =============================================================================
+# konnectivity_server_url       https://pgclerk.example.com (or the CNC FQDN)
+# konnectivity_bootstrap_token  pgm_bs_…  single-use, cluster-scoped
+# konnectivity_cluster          slug of the konnectivity cluster
+
+# =============================================================================
+# Mode + sizing knobs.
+# =============================================================================
+# server | worker. Server-mode probes every other agent in the cluster on
+# every port that matters. Worker-mode probes the DB endpoint from the
+# application's perspective and reports source IPs + a pg_hba verdict.
+konnectivity_mode: server
+
+# Worker-mode probe target. Required when mode=worker (asserted).
+#   konnectivity_worker_probe: db.acme.internal:5432
+konnectivity_worker_probe: ""
+
+# Free-form labels for the agent: comma-separated k=v list. Surfaces in
+# pgclerk UI so an operator can filter by az / rack / role.
+konnectivity_labels: ""
+
+# Version. 'latest' = always re-download on every run (idempotent: get_url
+# only rewrites when the remote bytes differ). A tag (e.g. 'v0.4.1') pins
+# to that GitHub Release.
+konnectivity_version: latest
+
+# Operator-side switch for the agent's experimental exec channel. Keep at 0
+# unless the operator team explicitly opted in. The systemd unit reads
+# this; flipping it requires a restart.
+konnectivity_allow_exec: 0
+konnectivity_allow_exec_cmds: "ansible,ansible-playbook,pg_isready,psql"
+
+# NTP host for clock-drift sampling. Empty disables.
+konnectivity_ntp_host: time.cloudflare.com
+
+# Probe / snapshot intervals. The defaults match the agent's own defaults
+# and are almost never changed.
+konnectivity_probe_interval: 15s
+konnectivity_snapshot_interval: 5m
+
+# =============================================================================
+# Install layout.
+# =============================================================================
+konnectivity_user: konnectivity
+konnectivity_group: konnectivity
+konnectivity_home: /var/lib/konnectivity
+konnectivity_conf_dir: /etc/konnectivity
+konnectivity_bin_path: /usr/local/bin/konnectivity-agent
+
+# =============================================================================
+# Binary source.
+# =============================================================================
+# Where to fetch the binary from. By default we pull through the pgclerk
+# central server, which proxies signed builds. Set this to a GitHub
+# Release URL if you'd rather pull directly:
+#   konnectivity_download_base: https://github.com/brinkhorst/pgclerk-konnectivity/releases/download/v0.4.1
+konnectivity_download_base: "{{ konnectivity_server_url | regex_replace('/$','') }}/install"
+
+# Override the resolved arch slug (auto-detected: amd64 | arm64).
+konnectivity_arch_override: ""
+
+# =============================================================================
+# Firewall.
+# =============================================================================
+# The agent is outbound-only -- no inbound rules required. We do not poke
+# the firewall by default. Operators who want a strict egress allow-list
+# can set `konnectivity_firewall_egress_open: true` to have os_baseline
+# allow 443/tcp to the server FQDN's resolved address(es).
+konnectivity_firewall_egress_open: false

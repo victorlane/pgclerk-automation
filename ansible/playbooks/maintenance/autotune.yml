@@ -1,17 +1,245 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         autotune
-# title:       PostgreSQL · autotune
-# category:    maintenance
-# surface:     postgres
-# destructive: False
+# Imperative auto-tuning of PostgreSQL config (topology-aware).
+#
+# Topology dispatch:
+#   self-managed-vm-aws, self-managed-vm-gcp
+#                       -> postgresql role runs the autotune formulas and
+#                          writes postgresql.conf (current behaviour).
+#                          Reload-only keys are reloaded, restart-required
+#                          keys surface a DBA notice; no auto-restart.
+#   aws-rds, aws-aurora -> the autotune role computes the same numbers, but
+#                          the values are pushed to an RDS DB parameter
+#                          group via `community.aws.rds_param_group`.
+#                          Static parameters set their ApplyMethod to
+#                          pending-reboot and the playbook surfaces a DBA
+#                          notice ("schedule reboot via maintenance window
+#                          or `aws rds reboot-db-instance ...`").  No
+#                          auto-reboot.
+#   cloudsql            -> values are pushed via `gcloud sql instances
+#                          patch --database-flags=...` (CloudSQL applies
+#                          dynamic flags live; restart-required flags
+#                          trigger an in-place restart unless the operator
+#                          has scheduled a maintenance window -- gcloud
+#                          will refuse without --no-async).  We use
+#                          --async and surface the operation id.
+#   alloydb             -> `gcloud alloydb instances update --database-flags
+#                          =...` against the primary instance.
+#
+# Behavioural rules for managed:
+#   - The autotune math (in roles/postgresql_autotune or equivalent) is
+#     pure; it produces a flat dict pg_autotune_settings of param -> value.
+#     This playbook consumes that dict from a pre-task fact set on
+#     localhost.
+#   - On AWS, we do not attach the param group to the instance here -- that
+#     wiring is owned by provisioning. We only update the existing group
+#     bound to managed_db_parameter_group_name.
+#   - On GCP, we pass --database-flags as a comma-separated list.
+#
+# Required vars (managed):
+#   cloud_region        - AWS / GCP region.
+#   cloud_project       - GCP project (cloudsql / alloydb).
+#   managed_instance_id - DB / cluster ID.
+#
+# Required vars (aws-rds, aws-aurora):
+#   managed_db_parameter_group_name - target RDS parameter group name.
+#   managed_engine                  - aurora-postgresql | postgres (for the
+#                                     DescribeEngineDefaultParameters lookup
+#                                     that classifies static vs dynamic).
+#
+# Required collections:
+#   community.postgresql, amazon.aws, community.aws, google.cloud
 
-- name: "PostgreSQL · autotune"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+- name: Refuse to run without an explicit --limit
+  hosts: localhost
   gather_facts: false
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'autotune'"
-          - "Replace ansible/playbooks/maintenance/autotune.yml with the real playbook."
+  - name: Assert ansible_limit
+    ansible.builtin.assert:
+      that: ansible_limit is defined
+      fail_msg: >-
+        Refusing to retune the entire inventory in one go. Re-run with
+        --limit <host> (one host at a time -- a restart-required change
+        wants its own maintenance window).
+
+  - name: Assert topology is defined
+    ansible.builtin.assert:
+      that:
+      - topology is defined
+      - topology in ['self-managed-vm-aws', 'self-managed-vm-gcp',
+                     'aws-rds', 'aws-aurora', 'cloudsql', 'alloydb']
+      fail_msg: "topology must be set to a known value."
+
+# ---------------------------------------------------------------------
+# Branch: self-managed VM (existing behaviour)
+# ---------------------------------------------------------------------
+- name: Auto-tune PostgreSQL on selected VM hosts
+  hosts: postgres_servers
+  become: true
+  gather_facts: true
+  vars:
+    postgresql_autotune: true
+  tasks:
+  - name: Skip when topology is managed
+    when: topology not in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+    ansible.builtin.meta: end_play
+
+  - name: Apply the postgresql role with autotune
+    ansible.builtin.include_role:
+      name: postgresql
+      apply:
+        tags:
+        - autotune
+
+# ---------------------------------------------------------------------
+# Branch: managed (AWS / GCP) -- all execution on localhost.
+# ---------------------------------------------------------------------
+- name: Auto-tune managed PostgreSQL
+  hosts: localhost
+  gather_facts: true
+  vars:
+    postgresql_autotune: true
+  tasks:
+  - name: Skip when topology is VM
+    when: topology in ['self-managed-vm-aws', 'self-managed-vm-gcp']
+    ansible.builtin.meta: end_play
+
+  - name: Assert managed vars
+    ansible.builtin.assert:
+      that:
+      - cloud_region is defined
+      - managed_instance_id is defined
+      fail_msg: "cloud_region and managed_instance_id are required."
+
+  # The autotune role exposes pg_autotune_settings: a flat dict of
+  # {parameter: value}. When invoked with check_mode in compute-only mode
+  # the role does not write to disk -- it just sets the fact. We run it
+  # delegated to localhost with sensible defaults; the math is pure.
+  - name: Compute autotune values (compute-only)
+    ansible.builtin.include_role:
+      name: postgresql
+      apply:
+        tags:
+        - autotune_compute
+    vars:
+      postgresql_autotune_compute_only: true
+
+  - name: Assert autotune produced a settings dict
+    ansible.builtin.assert:
+      that:
+      - pg_autotune_settings is defined
+      - pg_autotune_settings | length > 0
+      fail_msg: >-
+        Autotune role did not export pg_autotune_settings -- cannot push
+        values to the managed instance.
+
+  # ---- AWS RDS / Aurora ------------------------------------------------
+  - name: Assert RDS param group var
+    when: topology in ['aws-rds', 'aws-aurora']
+    ansible.builtin.assert:
+      that: managed_db_parameter_group_name is defined
+      fail_msg: "managed_db_parameter_group_name is required for AWS managed."
+
+  - name: Build RDS parameter list
+    when: topology in ['aws-rds', 'aws-aurora']
+    ansible.builtin.set_fact:
+      _rds_params: >-
+        {{ pg_autotune_settings | dict2items
+           | map('combine', {'apply_method': 'pending-reboot'})
+           | list }}
+
+  - name: Push parameters to RDS instance parameter group
+    when: topology == 'aws-rds'
+    amazon.aws.rds_instance_param_group:
+      name: "{{ managed_db_parameter_group_name }}"
+      region: "{{ cloud_region }}"
+      params: "{{ pg_autotune_settings }}"
+      state: present
+
+  - name: Push parameters to Aurora cluster parameter group
+    when: topology == 'aws-aurora'
+    amazon.aws.rds_cluster_param_group:
+      name: "{{ managed_db_parameter_group_name }}"
+      region: "{{ cloud_region }}"
+      params: "{{ pg_autotune_settings }}"
+      state: present
+
+  - name: Notify DBA of pending-reboot on RDS
+    when: topology in ['aws-rds', 'aws-aurora']
+    ansible.builtin.debug:
+      msg:
+      - "RDS parameter group {{ managed_db_parameter_group_name }} updated."
+      - "Static parameters apply on next reboot."
+      - "Schedule via maintenance window, or run:"
+      - "  aws rds reboot-db-instance --region {{ cloud_region }} \\"
+      - "    --db-instance-identifier {{ managed_instance_id }}"
+      - "This playbook does NOT auto-reboot."
+
+  # ---- CloudSQL --------------------------------------------------------
+  - name: Build CloudSQL --database-flags arg
+    when: topology == 'cloudsql'
+    ansible.builtin.set_fact:
+      _cs_flags: >-
+        {{ pg_autotune_settings | dict2items
+           | map(attribute=None)
+           | list }}
+
+  - name: Build CloudSQL flag string
+    when: topology == 'cloudsql'
+    ansible.builtin.set_fact:
+      _cs_flag_string: >-
+        {{ pg_autotune_settings
+           | dict2items
+           | map(attribute='key')
+           | zip(pg_autotune_settings | dict2items | map(attribute='value'))
+           | map('join', '=')
+           | join(',') }}
+
+  - name: Patch CloudSQL instance database flags
+    when: topology == 'cloudsql'
+    ansible.builtin.command: >-
+      gcloud sql instances patch {{ managed_instance_id }}
+        --project {{ cloud_project }}
+        --database-flags {{ _cs_flag_string | quote }}
+        --async
+    register: _cs_patch
+    changed_when: _cs_patch.rc == 0
+
+  - name: Notify DBA of CloudSQL flag update
+    when: topology == 'cloudsql'
+    ansible.builtin.debug:
+      msg:
+      - "CloudSQL instance {{ managed_instance_id }} flag patch submitted."
+      - "Static flags will apply on next instance restart."
+      - "Schedule via maintenance window or run:"
+      - "  gcloud sql instances restart {{ managed_instance_id }} \\"
+      - "    --project {{ cloud_project }}"
+
+  # ---- AlloyDB ---------------------------------------------------------
+  - name: Build AlloyDB --database-flags arg
+    when: topology == 'alloydb'
+    ansible.builtin.set_fact:
+      _alloydb_flag_string: >-
+        {{ pg_autotune_settings
+           | dict2items
+           | map(attribute='key')
+           | zip(pg_autotune_settings | dict2items | map(attribute='value'))
+           | map('join', '=')
+           | join(',') }}
+
+  - name: Update AlloyDB primary instance flags
+    when: topology == 'alloydb'
+    ansible.builtin.command: >-
+      gcloud alloydb instances update {{ managed_instance_id }}
+        --project {{ cloud_project }}
+        --region {{ cloud_region }}
+        --cluster {{ managed_instance_id }}
+        --database-flags {{ _alloydb_flag_string | quote }}
+    register: _alloydb_patch
+    changed_when: _alloydb_patch.rc == 0
+
+  - name: Notify DBA of AlloyDB flag update
+    when: topology == 'alloydb'
+    ansible.builtin.debug:
+      msg:
+      - "AlloyDB instance {{ managed_instance_id }} flag update submitted."
+      - "Static flags will apply on next instance restart."

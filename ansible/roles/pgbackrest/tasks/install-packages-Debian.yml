@@ -1,0 +1,15 @@
+---
+# pgBackRest ships in Debian main / Ubuntu universe; PGDG apt also carries
+# it (newer versions). We don't add the PGDG repo here -- if the consumer
+# needs the latest pgBackRest, the postgresql role on the same host has
+# already laid down the PGDG apt source list. Backup-only servers without
+# the postgresql role get the distro version, which is fine for v1.
+- name: Refresh apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install pgBackRest via apt
+  ansible.builtin.apt:
+    name: "{{ pgbackrest_package }}"
+    state: present

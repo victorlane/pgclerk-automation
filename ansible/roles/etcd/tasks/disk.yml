@@ -1,0 +1,64 @@
+---
+# Optional dedicated-disk path for etcd_data_dir.  Only fires when the
+# operator set etcd_data_device.  See docs/lessons-learned.md item #1
+# for the rationale (etcd fsync vs PG WAL contention on the same disk).
+
+- name: Resolve etcd block device (follow symlinks)
+  ansible.builtin.command: "readlink -f {{ etcd_data_device }}"
+  register: _etcd_device_resolved
+  changed_when: false
+
+- name: Set canonical device fact
+  ansible.builtin.set_fact:
+    _etcd_device: "{{ _etcd_device_resolved.stdout | trim }}"
+
+- name: Verify the device exists
+  ansible.builtin.stat:
+    path: "{{ _etcd_device }}"
+  register: _etcd_device_stat
+
+- name: Refuse to mount when the device is missing
+  ansible.builtin.assert:
+    that:
+    - _etcd_device_stat.stat.exists
+    - _etcd_device_stat.stat.isblk | default(false)
+    fail_msg: >-
+      etcd_data_device='{{ etcd_data_device }}' does not exist or is not
+      a block device on this host (resolved to {{ _etcd_device }}).
+      Check the device name from `lsblk` and update the var.
+
+# Use blkid to detect an existing filesystem.  Only run mkfs when blkid
+# returns nothing -- this keeps a re-run safe and prevents the role from
+# nuking a populated etcd disk on a second pass.
+- name: Check whether the device already has a filesystem
+  ansible.builtin.command: "blkid -s TYPE -o value {{ _etcd_device }}"
+  register: _etcd_device_fstype
+  changed_when: false
+  failed_when: false
+
+- name: Create filesystem on the dedicated etcd device
+  community.general.filesystem:
+    fstype: "{{ etcd_data_fstype }}"
+    dev: "{{ _etcd_device }}"
+  when: _etcd_device_fstype.stdout | length == 0
+
+- name: Read filesystem UUID for fstab
+  ansible.builtin.command: "blkid -s UUID -o value {{ _etcd_device }}"
+  register: _etcd_device_uuid
+  changed_when: false
+
+- name: Ensure etcd_data_dir mount point exists
+  ansible.builtin.file:
+    path: "{{ etcd_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Mount etcd_data_device at etcd_data_dir (and persist in fstab)
+  ansible.posix.mount:
+    src: "UUID={{ _etcd_device_uuid.stdout | trim }}"
+    path: "{{ etcd_data_dir }}"
+    fstype: "{{ etcd_data_fstype }}"
+    opts: "{{ etcd_data_mount_options }}"
+    state: mounted

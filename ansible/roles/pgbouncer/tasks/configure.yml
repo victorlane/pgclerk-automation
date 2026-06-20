@@ -1,0 +1,23 @@
+---
+# pgbouncer.ini is read on startup and on RELOAD; userlist.txt is read at
+# auth time. Both must be readable by the unit's runtime user. We keep
+# group-read off ('0640' with the runtime user as owner) because
+# userlist.txt contains SCRAM hashes -- safer to not expose to other
+# accounts on a shared host.
+- name: Render pgbouncer.ini
+  ansible.builtin.template:
+    src: pgbouncer.ini.j2
+    dest: "{{ pgbouncer_config_dir }}/pgbouncer.ini"
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "0640"
+  notify: Reload pgbouncer
+
+- name: Render userlist.txt
+  ansible.builtin.template:
+    src: userlist.txt.j2
+    dest: "{{ pgbouncer_auth_file }}"
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "0640"
+  notify: Reload pgbouncer

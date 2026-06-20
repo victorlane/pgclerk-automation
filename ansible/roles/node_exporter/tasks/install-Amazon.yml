@@ -1,0 +1,4 @@
+---
+# AL2023 main repo has no node_exporter package. Tarball path only.
+- name: Install from upstream tarball
+  ansible.builtin.include_tasks: install-tarball.yml

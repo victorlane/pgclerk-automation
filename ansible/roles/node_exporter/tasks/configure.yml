@@ -1,0 +1,50 @@
+---
+# Distro packages name the runtime user inconsistently (RHEL: node_exporter;
+# Debian: prometheus). Ensure our own user/group exist so the systemd unit
+# has a consistent identity.
+- name: Ensure system group exists
+  ansible.builtin.group:
+    name: "{{ node_exporter_group }}"
+    system: true
+    state: present
+
+- name: Ensure system user exists
+  ansible.builtin.user:
+    name: "{{ node_exporter_user }}"
+    group: "{{ node_exporter_group }}"
+    system: true
+    shell: /sbin/nologin
+    home: "/var/lib/{{ node_exporter_user }}"
+    create_home: false
+    state: present
+
+# 0775 with group=node_exporter so operators / sidecar scripts can drop
+# *.prom files in without sudo. The exporter only needs read access.
+- name: Ensure textfile collector directory exists
+  when: node_exporter_enable_textfile_collector
+  ansible.builtin.file:
+    path: "{{ node_exporter_textfile_dir }}"
+    state: directory
+    owner: "{{ node_exporter_user }}"
+    group: "{{ node_exporter_group }}"
+    mode: "0775"
+
+- name: Render systemd unit
+  ansible.builtin.template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+  - node_exporter reload systemd
+  - node_exporter restart
+
+- name: Flush handlers so the unit is in place before enable/start
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start node_exporter
+  ansible.builtin.service:
+    name: node_exporter
+    state: started
+    enabled: true

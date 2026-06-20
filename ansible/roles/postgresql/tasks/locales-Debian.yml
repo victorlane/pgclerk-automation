@@ -1,0 +1,37 @@
+---
+- name: Compute effective list of locales to ensure
+  ansible.builtin.set_fact:
+    postgresql_effective_locales: >-
+      {{ (
+           postgresql_locales
+           + (postgresql_databases | map(attribute='lc_collate', default=omit) | list)
+           + (postgresql_databases | map(attribute='lc_ctype',   default=omit) | list)
+         )
+         | reject('equalto', omit) | reject('equalto', None) | reject('equalto', '')
+         | unique | list
+      }}
+
+- name: Install the locales package
+  ansible.builtin.apt:
+    name: locales
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Debian only generates locales that are uncommented in /etc/locale.gen.
+# Add each requested locale (e.g. en_US.UTF-8 UTF-8) and run locale-gen if
+# we changed anything. C.UTF-8 ships built-in -- no /etc/locale.gen entry.
+- name: Ensure each requested locale is enabled in /etc/locale.gen
+  ansible.builtin.lineinfile:
+    path: /etc/locale.gen
+    regexp: "^#?\\s*{{ item | regex_escape }}\\s+{{ (item.split('.')[1] | default('UTF-8')) | regex_escape }}\\s*$"
+    line: "{{ item }} {{ item.split('.')[1] | default('UTF-8') }}"
+    state: present
+  loop: "{{ postgresql_effective_locales }}"
+  when: not item.startswith('C.')
+  register: _pg_locale_gen_lines
+
+- name: Regenerate locales when /etc/locale.gen changed
+  ansible.builtin.command: locale-gen
+  when: _pg_locale_gen_lines is changed
+  changed_when: true

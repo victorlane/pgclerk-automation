@@ -1,0 +1,127 @@
+---
+# Install the pgclerk-konnectivity agent on a Linux host. The agent itself
+# is statically-linked and OS-agnostic; what is OS-specific is the firewall
+# stance + the package the agent's runtime user is created with. We
+# delegate the firewall hop to os_baseline (already loaded for DB hosts)
+# and only mirror the node_exporter role's per-family dispatch for the
+# parts that genuinely differ.
+
+- name: Assert supported OS
+  ansible.builtin.assert:
+    that:
+    - ansible_facts['os_family'] in ['RedHat', 'Debian']
+      or ansible_facts['distribution'] == 'Amazon'
+    fail_msg: >-
+      The konnectivity_agent role supports RedHat, Debian, Ubuntu, and
+      Amazon Linux; got distribution='{{ ansible_facts['distribution'] }}',
+      os_family='{{ ansible_facts['os_family'] }}'.
+
+- name: Assert required vars
+  ansible.builtin.assert:
+    that:
+    - konnectivity_server_url | length > 0
+    - konnectivity_bootstrap_token | length > 0
+    - konnectivity_cluster | length > 0
+    - konnectivity_mode in ['server', 'worker']
+    fail_msg: >-
+      konnectivity_server_url, konnectivity_bootstrap_token,
+      konnectivity_cluster, and konnectivity_mode (server|worker) are
+      required.
+
+- name: Assert worker probe target is set in worker mode
+  ansible.builtin.assert:
+    that: konnectivity_worker_probe | length > 0
+    fail_msg: "konnectivity_worker_probe is required when konnectivity_mode=worker"
+  when: konnectivity_mode == 'worker'
+
+- name: Mirror the node_exporter dispatch (Amazon != RedHat for our purposes)
+  ansible.builtin.set_fact:
+    _kn_os_variant: >-
+      {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+         else ansible_facts['os_family'] }}
+
+- name: Resolve binary arch slug
+  ansible.builtin.set_fact:
+    _kn_arch: >-
+      {{ konnectivity_arch_override
+         if konnectivity_arch_override | length > 0
+         else ('arm64' if ansible_facts['architecture'] in ['aarch64','arm64'] else 'amd64') }}
+
+- name: Assert resolved arch is supported
+  ansible.builtin.assert:
+    that: _kn_arch in ['amd64', 'arm64']
+    fail_msg: >-
+      The konnectivity agent only ships linux/amd64 and linux/arm64;
+      resolved arch '{{ _kn_arch }}' is not supported.
+
+- name: Install pre-reqs (per OS family)
+  ansible.builtin.include_tasks: "prereqs-{{ _kn_os_variant }}.yml"
+
+- name: Ensure konnectivity system user
+  ansible.builtin.user:
+    name: "{{ konnectivity_user }}"
+    group: "{{ konnectivity_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ konnectivity_home }}"
+    create_home: true
+    state: present
+
+- name: Ensure konnectivity dirs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ konnectivity_user }}"
+    group: "{{ konnectivity_group }}"
+    mode: "0700"
+  loop:
+  - "{{ konnectivity_conf_dir }}"
+  - "{{ konnectivity_home }}"
+
+- name: Compose binary URL
+  ansible.builtin.set_fact:
+    _kn_url: >-
+      {{ konnectivity_download_base }}/konnectivity-agent-linux-{{ _kn_arch
+      }}{{ '' if konnectivity_version == 'latest' else '?version=' ~ konnectivity_version }}
+
+- name: Download konnectivity-agent binary
+  ansible.builtin.get_url:
+    url: "{{ _kn_url }}"
+    dest: "{{ konnectivity_bin_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+    # Re-download when pinned to 'latest' so an operator rerunning the
+    # playbook actually picks up new releases. A pinned tag only fetches
+    # on first install (idempotent by checksum on disk vs. server bytes).
+    force: "{{ konnectivity_version == 'latest' }}"
+  notify: konnectivity restart
+
+- name: Write /etc/konnectivity/env
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ konnectivity_conf_dir }}/env"
+    owner: root
+    group: "{{ konnectivity_group }}"
+    mode: "0640"
+  notify: konnectivity restart
+
+- name: Render systemd unit
+  ansible.builtin.template:
+    src: konnectivity-agent.service.j2
+    dest: /etc/systemd/system/konnectivity-agent.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+  - konnectivity reload systemd
+  - konnectivity restart
+
+- name: Flush handlers so the unit is in place before enable/start
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start konnectivity-agent
+  ansible.builtin.service:
+    name: konnectivity-agent
+    state: started
+    enabled: true

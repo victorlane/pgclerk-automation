@@ -1,0 +1,134 @@
+---
+# Timezone applied via timedatectl.
+baseline_timezone: UTC
+
+# Chrony / NTP. If baseline_chrony_servers is empty the distro default
+# /etc/chrony.conf is left untouched -- the package is still installed and
+# the service is still enabled.
+baseline_chrony_servers: []
+baseline_chrony_pools: []
+baseline_chrony_options:
+- iburst
+
+# sysctl tuning for a database host. The role merges baseline_sysctl on
+# top of baseline_sysctl_defaults so the consumer only needs to declare
+# overrides.
+baseline_sysctl_defaults:
+  vm.swappiness: 1
+  vm.overcommit_memory: 2
+  vm.overcommit_ratio: 80
+  kernel.shmmax: "{{ (ansible_facts.memtotal_mb | int * 1024 * 1024 * 0.5) | int }}"
+  net.core.somaxconn: 4096
+  net.ipv4.tcp_keepalive_time: 600
+  # Panic-on-OOM produces a clean reboot and lets monitoring see a hard
+  # failure instead of a wedged node where PG was OOM-killed but the box
+  # limped on.  We pair this with cgroup MemoryMax (below) so the panic
+  # only fires when even the OS itself can't allocate.
+  vm.panic_on_oom: 0
+  # Higher dirty ratios let writes coalesce; defaults are tuned for
+  # general-purpose servers and are too aggressive for a write-heavy DB
+  # on fast storage.  Drop both -- smaller, more frequent flushes hurt
+  # tail latency less than the periodic stalls the defaults produce.
+  vm.dirty_background_ratio: 5
+  vm.dirty_ratio: 10
+baseline_sysctl: {}
+baseline_sysctl_file: /etc/sysctl.d/90-pgclerk.conf
+
+# ulimits applied via /etc/security/limits.d/90-<db_user>.conf.
+baseline_db_user: postgres
+baseline_limits:
+- domain: "{{ baseline_db_user }}"
+  limit_type: soft
+  limit_item: nofile
+  value: 65536
+- domain: "{{ baseline_db_user }}"
+  limit_type: hard
+  limit_item: nofile
+  value: 65536
+- domain: "{{ baseline_db_user }}"
+  limit_type: soft
+  limit_item: nproc
+  value: 4096
+- domain: "{{ baseline_db_user }}"
+  limit_type: hard
+  limit_item: nproc
+  value: 4096
+
+# Transparent Huge Pages. Disable defrag via a oneshot systemd unit
+# (PG and most OLTP databases benefit from THP=never).
+baseline_disable_thp: true
+
+# /etc/hosts management. Off by default -- only act when explicitly enabled.
+baseline_manage_hosts: false
+baseline_hosts_ip: "{{ ansible_facts.default_ipv4.address | default('') }}"
+baseline_hosts_fqdn: "{{ ansible_facts.fqdn | default(ansible_facts.hostname) }}"
+baseline_hosts_aliases: []
+
+# ----- Hardening ------------------------------------------------------------
+# All hardening tasks are guarded by these toggles so the baseline role
+# stays composable.  The defaults are MSP-grade: bias toward operator
+# survivability and isolation, with anything that can be wrong-for-some-
+# customers off by default.
+
+# Master toggle for the hardening.yml task subset.
+baseline_apply_hardening: true
+
+# Keep sshd alive even when something else (Postgres) eats all the RAM.
+# OOMScoreAdjust=-1000 makes sshd the LAST process the OOM killer picks.
+# Applied via systemd drop-in at /etc/systemd/system/sshd.service.d/.
+baseline_protect_sshd: true
+baseline_sshd_oom_score_adjust: -1000
+
+# Pin systemd-logind too so an active operator session can't be torn down
+# under memory pressure.  Default -900 in upstream; push to -1000 to match
+# sshd.
+baseline_protect_logind: true
+
+# Confine PostgreSQL into a dedicated systemd slice with hard memory and
+# CPU caps.  Even if PG wants 100% of RAM, the cgroup keeps the OS and
+# sshd functional.  Numbers are fractions of total RAM (0.0 - 1.0).
+#
+#   memory_high  : soft cap; PG starts to reclaim aggressively here
+#   memory_max   : hard cap; PG processes are OOM-killed inside the slice
+#                  if they exceed this, but the host itself stays up
+baseline_postgres_isolation: true
+baseline_postgres_memory_high_fraction: 0.90
+baseline_postgres_memory_max_fraction:  0.95
+baseline_postgres_cpu_weight: 200          # default systemd weight is 100
+baseline_postgres_io_weight: 200
+# Which systemd unit gets the Slice= drop-in.  Resolved by the postgresql
+# role's per-OS vars to postgresql-<ver>.service / postgresql@<ver>-main.service
+# / postgresql.service.  The baseline role uses a discovery pattern (glob
+# /etc/systemd/system + /usr/lib/systemd/system) when this var is empty.
+baseline_postgres_service_unit: ""
+
+# sshd hardening.  Drops a file at /etc/ssh/sshd_config.d/10-pgclerk.conf
+# so we don't fight the package's main config.  Defaults reject everything
+# we don't want (passwords, root, X11, agent forwarding).
+baseline_sshd_hardening: true
+baseline_sshd_settings:
+  PasswordAuthentication: "no"
+  PermitRootLogin: "no"
+  KbdInteractiveAuthentication: "no"
+  X11Forwarding: "no"
+  AllowAgentForwarding: "no"
+  AllowTcpForwarding: "no"
+  PermitUserEnvironment: "no"
+  MaxAuthTries: "3"
+  MaxSessions: "5"
+  LoginGraceTime: "30s"
+  ClientAliveInterval: "60"
+  ClientAliveCountMax: "3"
+  Banner: none
+
+# Lock the postgres user out of interactive login.  Operators sudo -iu
+# postgres from their own account; nobody should ssh in directly as
+# postgres.  Set to false for shops that require direct postgres logins.
+baseline_lock_postgres_login: true
+
+# When the postgres login is locked but a list of CIDRs is supplied here,
+# sshd accepts postgres logins ONLY from those CIDRs (via a Match Address
+# block in the same drop-in).  Used by pgBackRest topologies where the
+# backup server SSHes to PG nodes (and vice versa) as the postgres user.
+# Leave empty to keep postgres fully denied at the sshd layer.
+baseline_allow_postgres_from: []

@@ -1,0 +1,32 @@
+---
+# Pinned upstream version. Honoured on Amazon Linux (tarball) and on
+# RHEL/Debian when node_exporter_install_from_tarball=true.
+node_exporter_version: "1.8.2"
+
+# Force the tarball install path on RHEL/Debian (default: take the
+# package the distro/EPEL ships). AL2023 ignores this flag -- it always
+# installs from the tarball.
+node_exporter_install_from_tarball: false
+
+# Listen address. Default loopback-only; expose by setting this to
+# 0.0.0.0:9100 (and opening the firewall in os_baseline_firewall_rules).
+node_exporter_listen_address: "127.0.0.1:9100"
+
+# System user/group the exporter runs as. Distro packages on RHEL/Debian
+# typically create these; we reuse them when present.
+node_exporter_user: node_exporter
+node_exporter_group: node_exporter
+
+# Layout for tarball installs.
+node_exporter_install_dir: "/opt/node_exporter-{{ node_exporter_version }}"
+node_exporter_bin_path: "/usr/local/bin/node_exporter"
+
+# Textfile collector dir. Mode 0775 (group-writable) so operators or
+# sidecar scripts can drop *.prom files in without sudo. Owned by
+# node_exporter user/group.
+node_exporter_textfile_dir: "/var/lib/node_exporter/textfile_collector"
+node_exporter_enable_textfile_collector: true
+
+# Extra CLI flags appended to ExecStart. The collector enable/disable list
+# is intentionally not exposed -- the defaults are sane for a DB host.
+node_exporter_extra_flags: []

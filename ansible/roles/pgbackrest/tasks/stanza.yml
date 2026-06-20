@@ -1,0 +1,62 @@
+---
+# stanza-create / check runs from whichever host owns the repo:
+#   - server-type repo: from the backup server.
+#   - s3-only repo set: from the PG primary (because the PG primary writes
+#     directly to S3; there is no separate repo host).
+#
+# Only one host needs to perform stanza-create per repo; pgbackrest is
+# idempotent and returns success on re-run.
+
+- name: Resolve primary hostname (for s3-only stanza-create)
+  ansible.builtin.set_fact:
+    _pgbr_primary_host: >-
+      {{ (groups['postgres_primary'] | default([]) | first)
+         | default(groups['postgres_servers'] | default([]) | first) }}
+
+- name: Create stanza on backup server (server-type repo present)
+  ansible.builtin.command:
+    cmd: "pgbackrest --stanza={{ pgbackrest_stanza }} stanza-create"
+  become: true
+  become_user: postgres
+  register: _pgbr_stanza_create
+  changed_when: "'new stanza' in (_pgbr_stanza_create.stderr | default('')) or 'new stanza' in (_pgbr_stanza_create.stdout | default(''))"
+  failed_when:
+  - _pgbr_stanza_create.rc != 0
+  - "'already exists' not in (_pgbr_stanza_create.stderr | default(''))"
+  when:
+  - _pgbr_is_backup_server
+  - _pgbr_has_server_repo
+
+- name: Create stanza on primary (s3-only -- no server repo)
+  ansible.builtin.command:
+    cmd: "pgbackrest --stanza={{ pgbackrest_stanza }} stanza-create"
+  become: true
+  become_user: postgres
+  register: _pgbr_stanza_create_s3
+  changed_when: "'new stanza' in (_pgbr_stanza_create_s3.stderr | default('')) or 'new stanza' in (_pgbr_stanza_create_s3.stdout | default(''))"
+  failed_when:
+  - _pgbr_stanza_create_s3.rc != 0
+  - "'already exists' not in (_pgbr_stanza_create_s3.stderr | default(''))"
+  when:
+  - _pgbr_is_pg_node
+  - not _pgbr_has_server_repo
+  - inventory_hostname == _pgbr_primary_host
+
+- name: Run pgbackrest check on backup server
+  ansible.builtin.command:
+    cmd: "pgbackrest --stanza={{ pgbackrest_stanza }} check"
+  become: true
+  become_user: postgres
+  register: _pgbr_check
+  changed_when: false
+  failed_when: false
+  when:
+  - _pgbr_is_backup_server
+  - _pgbr_has_server_repo
+
+- name: Show pgbackrest check output
+  ansible.builtin.debug:
+    var: _pgbr_check.stdout_lines
+  when:
+  - _pgbr_check is defined
+  - _pgbr_check.stdout_lines is defined

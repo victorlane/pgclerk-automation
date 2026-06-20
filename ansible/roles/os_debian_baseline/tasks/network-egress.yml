@@ -1,0 +1,111 @@
+---
+# Node-level egress controls.  Mirror of os_rhel_baseline/tasks/network-egress.yml
+# with apt-specific proxy config in place of dnf.
+
+- name: Assert proxy URL is set when mode=proxy
+  ansible.builtin.assert:
+    that: baseline_proxy_url | length > 0
+    fail_msg: >-
+      baseline_network_egress=proxy requires baseline_proxy_url to be set
+      (e.g. http://proxy.customer.com:3128).
+  when: baseline_network_egress == 'proxy'
+
+# ----- Mode: proxy ----------------------------------------------------------
+
+- name: Render /etc/environment proxy entries
+  ansible.builtin.blockinfile:
+    path: /etc/environment
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE pgclerk-proxy"
+    block: |
+      HTTP_PROXY={{ baseline_proxy_url }}
+      HTTPS_PROXY={{ baseline_proxy_https_url }}
+      http_proxy={{ baseline_proxy_url }}
+      https_proxy={{ baseline_proxy_https_url }}
+      NO_PROXY={{ baseline_proxy_no_proxy | join(',') }}
+      no_proxy={{ baseline_proxy_no_proxy | join(',') }}
+  when: baseline_network_egress == 'proxy'
+
+- name: Render /etc/profile.d/proxy.sh
+  ansible.builtin.copy:
+    dest: /etc/profile.d/proxy.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by pgclerk / os_debian_baseline.
+      export HTTP_PROXY="{{ baseline_proxy_url }}"
+      export HTTPS_PROXY="{{ baseline_proxy_https_url }}"
+      export http_proxy="{{ baseline_proxy_url }}"
+      export https_proxy="{{ baseline_proxy_https_url }}"
+      export NO_PROXY="{{ baseline_proxy_no_proxy | join(',') }}"
+      export no_proxy="{{ baseline_proxy_no_proxy | join(',') }}"
+  when: baseline_network_egress == 'proxy'
+
+- name: Configure apt to use the proxy
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/95pgclerk-proxy
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Acquire::http::Proxy "{{ baseline_proxy_url }}";
+      Acquire::https::Proxy "{{ baseline_proxy_https_url }}";
+  when: baseline_network_egress == 'proxy'
+
+- name: Configure system-wide wgetrc proxy
+  ansible.builtin.blockinfile:
+    path: /etc/wgetrc
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE pgclerk-proxy"
+    block: |
+      use_proxy = on
+      http_proxy = {{ baseline_proxy_url }}
+      https_proxy = {{ baseline_proxy_https_url }}
+  when: baseline_network_egress == 'proxy'
+
+# Cleanup when mode != proxy
+
+- name: Clean up /etc/environment proxy entries when mode != proxy
+  ansible.builtin.blockinfile:
+    path: /etc/environment
+    marker: "# {mark} ANSIBLE pgclerk-proxy"
+    state: absent
+  when: baseline_network_egress != 'proxy'
+
+- name: Remove /etc/profile.d/proxy.sh when mode != proxy
+  ansible.builtin.file:
+    path: /etc/profile.d/proxy.sh
+    state: absent
+  when: baseline_network_egress != 'proxy'
+
+- name: Remove apt proxy when mode != proxy
+  ansible.builtin.file:
+    path: /etc/apt/apt.conf.d/95pgclerk-proxy
+    state: absent
+  when: baseline_network_egress != 'proxy'
+
+- name: Clean up wgetrc proxy entries when mode != proxy
+  ansible.builtin.blockinfile:
+    path: /etc/wgetrc
+    marker: "# {mark} ANSIBLE pgclerk-proxy"
+    state: absent
+  when: baseline_network_egress != 'proxy'
+
+# ----- Mode: blocked --------------------------------------------------------
+
+- name: Surface blocked-egress stub warning
+  ansible.builtin.debug:
+    msg:
+    - "############################################################"
+    - "baseline_network_egress=blocked is STUBBED on this host."
+    - "The host accepts the var but does NOT yet enforce egress"
+    - "restrictions -- nftables ruleset install is a v2 follow-up."
+    - "############################################################"
+  when: baseline_network_egress == 'blocked'

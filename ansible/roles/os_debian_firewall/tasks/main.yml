@@ -1,0 +1,67 @@
+---
+# Optionally install ufw -- by default we leave the host's firewall stack
+# alone. The role only acts when ufw is on the box.
+- name: Install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: firewall_enable_ufw | bool
+
+- name: Detect ufw binary
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: firewall_ufw_bin
+
+# Wrap everything in a block guarded by ufw actually being available so a
+# host without ufw silently no-ops this role without aborting downstream
+# roles.
+- name: Configure ufw rules
+  when: firewall_ufw_bin.stat.exists
+  block:
+  - name: Set ufw default incoming policy
+    community.general.ufw:
+      direction: incoming
+      default: "{{ firewall_ufw_default_incoming }}"
+
+  - name: Set ufw default outgoing policy
+    community.general.ufw:
+      direction: outgoing
+      default: "{{ firewall_ufw_default_outgoing }}"
+
+  - name: Set ufw logging level
+    community.general.ufw:
+      logging: "{{ firewall_ufw_logging }}"
+
+  - name: Allow named ufw application profiles
+    community.general.ufw:
+      rule: allow
+      name: "{{ item }}"
+    loop: "{{ firewall_services }}"
+
+  - name: Allow port rules without source restriction
+    community.general.ufw:
+      rule: allow
+      port: "{{ item.port | string }}"
+      proto: "{{ item.protocol | default('tcp') }}"
+    loop: "{{ firewall_rules }}"
+    loop_control:
+      label: "{{ item.port }}/{{ item.protocol | default('tcp') }} (any source)"
+    when: (item.sources | default(['any'])) == ['any']
+
+  - name: Allow port rules with source CIDR restriction
+    community.general.ufw:
+      rule: allow
+      port: "{{ pair.0.port | string }}"
+      proto: "{{ pair.0.protocol | default('tcp') }}"
+      from_ip: "{{ pair.1 }}"
+    loop: "{{ firewall_rules | subelements('sources', skip_missing=True) }}"
+    loop_control:
+      loop_var: pair
+      label: "{{ pair.0.port }}/{{ pair.0.protocol | default('tcp') }} from {{ pair.1 }}"
+    when: (pair.0.sources | default(['any'])) != ['any']
+
+  - name: Enable ufw
+    community.general.ufw:
+      state: enabled

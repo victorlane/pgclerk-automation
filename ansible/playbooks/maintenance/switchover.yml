@@ -1,17 +1,220 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         switchover
-# title:       PostgreSQL · planned switchover
-# category:    maintenance
-# surface:     postgres
-# destructive: False
+# Graceful Patroni switchover.  Moves the leader role to a designated
+# replica with no failure scenario assumed (this is NOT failover) -- used
+# pre-upgrade, pre-maintenance, or to rebalance load.
+#
+# Usage:
+#   ansible-playbook playbooks/maintenance/switchover.yml \
+#     -e target_leader=<replica_host>
+#
+# Required vars:
+#   target_leader : the inventory hostname of the replica that should
+#                   become the new leader.
+#
+# Optional vars:
+#   switchover_scheduled_at : RFC3339 timestamp to schedule the switchover
+#                              at; default is "now" (immediate).
+#   switchover_max_lag_mb   : refuse to switch over if target_leader is
+#                              lagging more than this many MB.  Default: 16.
+#   switchover_timeout_s    : seconds to wait for the role swap to complete.
+#                              Default: 300.
+#
+# Refusals:
+#   - target_leader is already the leader.
+#   - target_leader not in postgres_replicas.
+#   - Replica lag on target_leader exceeds switchover_max_lag_mb.
+#   - postgresql_ha_mode != patroni.
+#
+# Operates cluster-wide (does NOT require --limit; the play binds to the
+# current leader, derives state from patronictl, and validates the target
+# from inventory).
 
-- name: "PostgreSQL · planned switchover"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+- name: Validate parameters
+  hosts: localhost
   gather_facts: false
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'switchover'"
-          - "Replace ansible/playbooks/maintenance/switchover.yml with the real playbook."
+  - name: Assert target_leader is defined
+    ansible.builtin.assert:
+      that:
+      - target_leader is defined
+      - target_leader | length > 0
+      fail_msg: "target_leader must be provided (-e target_leader=<inventory hostname>)."
+
+  - name: Assert target_leader is in postgres_replicas
+    ansible.builtin.assert:
+      that: target_leader in (groups['postgres_replicas'] | default([]))
+      fail_msg: >-
+        target_leader '{{ target_leader }}' is not in inventory group
+        postgres_replicas.  Switchover only targets registered replicas.
+
+- name: Run Patroni switchover
+  # Bind to the first primary host so we can read patronictl, but the
+  # switchover itself flows through the DCS and affects the whole cluster.
+  hosts: "{{ groups['postgres_primary'] | default([]) | first | default(groups['postgres_servers'] | first) }}"
+  become: true
+  gather_facts: true
+  vars:
+    switchover_max_lag_mb: 16
+    switchover_timeout_s: 300
+  tasks:
+  # --- Pre-flight ---------------------------------------------------------
+
+  - name: Refuse unless cluster is in patroni mode
+    ansible.builtin.assert:
+      that: (postgresql_ha_mode | default('standalone')) == 'patroni'
+      fail_msg: >-
+        switchover is HA-specific (Patroni).  Cluster runs
+        postgresql_ha_mode={{ postgresql_ha_mode | default('standalone') }}.
+
+  - name: Capture cluster topology (before)
+    ansible.builtin.command:
+      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+    register: _sw_list_pre
+    changed_when: false
+
+  - name: Parse pre-switchover topology
+    ansible.builtin.set_fact:
+      _sw_members_pre: "{{ _sw_list_pre.stdout | from_json }}"
+
+  - name: Identify current leader
+    ansible.builtin.set_fact:
+      _sw_current_leader: >-
+        {{ (_sw_members_pre
+            | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
+            | list | first | default({})).Member | default('') }}
+
+  - name: Identify target member entry
+    ansible.builtin.set_fact:
+      _sw_target_entry: >-
+        {{ (_sw_members_pre
+            | selectattr('Member', 'equalto', target_leader)
+            | list | first | default({})) }}
+
+  - name: Assert a current leader exists
+    ansible.builtin.assert:
+      that: _sw_current_leader | length > 0
+      fail_msg: >-
+        No Patroni leader visible from this host.  Either the cluster is
+        in an in-progress failover or patronictl can't reach DCS.
+
+  - name: Refuse when target_leader is already the leader
+    ansible.builtin.assert:
+      that: _sw_current_leader != target_leader
+      fail_msg: >-
+        target_leader '{{ target_leader }}' is already the current leader;
+        nothing to do.
+
+  - name: Refuse when target is not healthy / not streaming
+    ansible.builtin.assert:
+      that: (_sw_target_entry.State | default('')) in ['streaming', 'running']
+      fail_msg: >-
+        Target '{{ target_leader }}' is not in a healthy replica state
+        (got State='{{ _sw_target_entry.State | default('unknown') }}').
+        Rebuild it first via replica-rebuild.yml or wait until it catches
+        up.
+
+  - name: Refuse when target lag exceeds switchover_max_lag_mb
+    ansible.builtin.assert:
+      that: (_sw_target_entry['Lag in MB'] | default(0) | int) <= (switchover_max_lag_mb | int)
+      fail_msg: >-
+        Target '{{ target_leader }}' lag is
+        {{ _sw_target_entry['Lag in MB'] | default(0) }} MB, exceeding the
+        switchover_max_lag_mb={{ switchover_max_lag_mb }} threshold.
+        Promoting it now would risk losing recent commits.  Wait for
+        catch-up or raise the threshold consciously.
+
+  - name: Surface switchover plan
+    ansible.builtin.debug:
+      msg:
+      - "Switchover plan"
+      - "  Current leader : {{ _sw_current_leader }}"
+      - "  New leader     : {{ target_leader }}"
+      - "  Target lag MB  : {{ _sw_target_entry['Lag in MB'] | default(0) }}"
+      - "  Threshold MB   : {{ switchover_max_lag_mb }}"
+      - "  Scheduled at   : {{ switchover_scheduled_at | default('now (immediate)') }}"
+
+  # --- Execute switchover -------------------------------------------------
+
+  - name: Capture switchover start time
+    ansible.builtin.set_fact:
+      _sw_t0: "{{ ansible_date_time.iso8601 }}"
+
+  - name: Build patronictl argv
+    ansible.builtin.set_fact:
+      _sw_argv: >-
+        {{
+          ['/usr/local/bin/patronictl', '-c', '/etc/patroni/patroni.yml',
+           'switchover',
+           '--master', _sw_current_leader,
+           '--candidate', target_leader,
+           '--force']
+          + (['--scheduled', switchover_scheduled_at] if switchover_scheduled_at is defined else [])
+        }}
+
+  - name: Issue patronictl switchover
+    ansible.builtin.command:
+      argv: "{{ _sw_argv }}"
+    register: _sw_run
+    changed_when: true
+
+  - name: Surface switchover command output
+    ansible.builtin.debug:
+      var: _sw_run.stdout_lines
+
+  # --- Poll until role swap completes -------------------------------------
+
+  - name: Poll patronictl until role swap completes
+    ansible.builtin.command:
+      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+    register: _sw_poll
+    changed_when: false
+    failed_when: false
+    retries: "{{ ((switchover_timeout_s | int) / 5) | int }}"
+    delay: 5
+    until:
+    - _sw_poll.rc == 0
+    - (_sw_poll.stdout | from_json
+       | selectattr('Member', 'equalto', target_leader)
+       | map(attribute='Role') | list | first | default('')) in ['Leader', 'Standby Leader']
+    when: switchover_scheduled_at is not defined
+
+  - name: Capture switchover stop time
+    ansible.builtin.set_fact:
+      _sw_t1: "{{ ansible_date_time.iso8601 }}"
+
+  - name: Capture cluster topology (after)
+    ansible.builtin.command:
+      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
+    register: _sw_list_post
+    changed_when: false
+
+  # --- Smoke query --------------------------------------------------------
+
+  - name: Smoke pg_is_in_recovery() on the new leader
+    delegate_to: localhost
+    become: false
+    community.postgresql.postgresql_query:
+      login_host: "{{ hostvars[target_leader].ansible_host | default(target_leader) }}"
+      login_port: "{{ postgresql_port | default(5432) }}"
+      login_user: "postgres"
+      login_password: "{{ patroni_superuser_password | default('changeme-superuser') }}"
+      db: postgres
+      query: "SELECT pg_is_in_recovery() AS in_recovery, inet_server_addr() AS server"
+    register: _sw_smoke
+    failed_when: false
+    when: switchover_scheduled_at is not defined
+
+  - name: Surface switchover verdict
+    ansible.builtin.debug:
+      msg:
+      - "########################################################################"
+      - "Patroni switchover{{ ' (scheduled)' if switchover_scheduled_at is defined else '' }}"
+      - "  From          : {{ _sw_current_leader }}"
+      - "  To            : {{ target_leader }}"
+      - "  Started       : {{ _sw_t0 }}"
+      - "  Stopped       : {{ _sw_t1 }}"
+      - "  Scheduled at  : {{ switchover_scheduled_at | default('immediate') }}"
+      - "  Smoke result  : {{ (_sw_smoke.query_result | default([{}])) | first if (_sw_smoke is defined and _sw_smoke.query_result is defined) else 'skipped (scheduled)' }}"
+      - "  Topology      :"
+      - "{{ _sw_list_post.stdout }}"
+      - "########################################################################"

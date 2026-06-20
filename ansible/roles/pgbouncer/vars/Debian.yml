@@ -1,0 +1,9 @@
+---
+# Debian / Ubuntu ship pgbouncer in main / universe. The distro package
+# creates user/group 'postgres' (it reuses the postgresql common user) and
+# the unit pgbouncer.service runs as that user, reading
+# /etc/pgbouncer/pgbouncer.ini.
+pgbouncer_package: pgbouncer
+pgbouncer_user: postgres
+pgbouncer_group: postgres
+pgbouncer_config_dir: /etc/pgbouncer

@@ -1,0 +1,233 @@
+---
+# Host-hardening + workload isolation. Three independent concerns, each
+# toggleable so customers can opt out of pieces without disabling the
+# whole baseline:
+#
+#   1. baseline_protect_sshd / baseline_protect_logind
+#      OOMScoreAdjust drop-ins so an overheated Postgres cannot evict the
+#      operator's only way back into the box.
+#
+#   2. baseline_postgres_isolation
+#      Confine the Postgres systemd unit into a dedicated slice with
+#      MemoryHigh/MemoryMax/CPUWeight/IOWeight so a runaway PG can't
+#      kill its node.
+#
+#   3. baseline_sshd_hardening / baseline_lock_postgres_login
+#      sshd_config drop-in disabling passwords, root login, etc.; lock
+#      the postgres user shell so nobody logs in as postgres directly.
+
+# --- 1. SSH / logind OOM protection ----------------------------------------
+
+- name: Ensure sshd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/sshd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: baseline_protect_sshd | bool
+
+- name: Pin sshd OOM score so it survives memory pressure
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/sshd.service.d/10-oom-protect.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      OOMScoreAdjust={{ baseline_sshd_oom_score_adjust }}
+  when: baseline_protect_sshd | bool
+  notify: Reload systemd
+
+- name: Ensure systemd-logind drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/systemd-logind.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: baseline_protect_logind | bool
+
+- name: Pin systemd-logind OOM score so operator sessions survive
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/systemd-logind.service.d/10-oom-protect.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      OOMScoreAdjust=-1000
+  when: baseline_protect_logind | bool
+  notify: Reload systemd
+
+# --- 2. Postgres cgroup isolation ------------------------------------------
+# A dedicated systemd slice scopes PG so memory pressure inside the slice
+# doesn't propagate up to the OS. Defaults are derived from total RAM so
+# the operator just declares a fraction.
+
+- name: Render pgclerk-postgres slice
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/pgclerk-postgres.slice
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Resource isolation for managed PostgreSQL instances
+      Before=slices.target
+
+      [Slice]
+      MemoryAccounting=yes
+      CPUAccounting=yes
+      IOAccounting=yes
+      MemoryHigh={{ (ansible_facts.memtotal_mb | int * baseline_postgres_memory_high_fraction * 1024 * 1024) | int }}
+      MemoryMax={{ (ansible_facts.memtotal_mb | int * baseline_postgres_memory_max_fraction * 1024 * 1024) | int }}
+      CPUWeight={{ baseline_postgres_cpu_weight }}
+      IOWeight={{ baseline_postgres_io_weight }}
+  when: baseline_postgres_isolation | bool
+  notify: Reload systemd
+
+# Discover the postgresql systemd unit name when the consumer didn't pin
+# one.  Glob the standard locations; pick the first hit.
+- name: Detect installed postgresql systemd unit (auto)
+  ansible.builtin.find:
+    paths:
+    - /usr/lib/systemd/system
+    - /etc/systemd/system
+    patterns:
+    - "postgresql.service"
+    - "postgresql-*.service"
+    - "postgresql@*.service"
+    file_type: any
+  register: _baseline_pg_unit_search
+  when:
+  - baseline_postgres_isolation | bool
+  - baseline_postgres_service_unit | length == 0
+
+- name: Resolve postgresql unit name
+  ansible.builtin.set_fact:
+    _baseline_pg_unit: >-
+      {{ baseline_postgres_service_unit
+         if baseline_postgres_service_unit | length > 0
+         else ((_baseline_pg_unit_search.files | default([])) | map(attribute='path')
+              | map('basename') | first | default('')) }}
+  when: baseline_postgres_isolation | bool
+
+- name: Skip PG slice binding when no postgresql unit is installed
+  ansible.builtin.debug:
+    msg: >-
+      No postgresql systemd unit found on this host; the
+      pgclerk-postgres.slice is created but not yet bound to anything.
+      Apply this role again after the postgresql role installs PG.
+  when:
+  - baseline_postgres_isolation | bool
+  - _baseline_pg_unit | default('') | length == 0
+
+- name: Ensure postgresql drop-in directory exists
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ _baseline_pg_unit }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+  - baseline_postgres_isolation | bool
+  - _baseline_pg_unit | default('') | length > 0
+
+- name: Bind postgresql unit into pgclerk-postgres.slice
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ _baseline_pg_unit }}.d/10-pgclerk-slice.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      Slice=pgclerk-postgres.slice
+      # Postgres processes inside the slice run with a slightly worse
+      # OOM score than the OS baseline, so when the slice itself hits
+      # MemoryMax the OOM killer picks PG over essential services.
+      OOMScoreAdjust=200
+  when:
+  - baseline_postgres_isolation | bool
+  - _baseline_pg_unit | default('') | length > 0
+  notify: Reload systemd
+
+# --- 3. sshd hardening + postgres login lock --------------------------------
+
+- name: Ensure sshd_config.d exists
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: baseline_sshd_hardening | bool
+
+# Use a drop-in rather than editing the main config so a distro package
+# update can't blow our changes away.  Keys come from baseline_sshd_settings,
+# rendered in the standard `Key Value` form sshd_config expects.
+- name: Render sshd_config drop-in
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-pgclerk.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by pgclerk / os_rhel_baseline.
+      {% for key, value in baseline_sshd_settings.items() %}
+      {{ key }} {{ value }}
+      {% endfor %}
+  when: baseline_sshd_hardening | bool
+  notify: Restart sshd
+
+# DenyUsers in sshd_config rejects ssh-as-postgres at the sshd layer,
+# without breaking the user's shell.  Why not change the postgres shell
+# to /sbin/nologin?  Because PGDG's postgresql-<ver>-setup initdb wrapper
+# (and pg_ctlcluster, pg_basebackup, etc.) all do `su - postgres -c '...'`
+# internally, and `su -` honors the target user's login shell.  Setting
+# the shell to nologin breaks every PG admin command that root would
+# normally run as postgres.
+# sshd's directive precedence: DenyUsers always wins over a later
+# AllowUsers, even inside a Match block.  So the strict default (no
+# allow-list) emits the global `DenyUsers postgres`, and the peer-allow
+# variant emits the DenyUsers INSIDE a `Match Address !<peer_cidrs>`
+# block -- meaning "from any address NOT in the peer list, deny postgres".
+# Connections from peer CIDRs fall through to the default (no DenyUsers),
+# so pgBackRest's cross-host postgres SSH works.
+- name: Reject ssh-as-postgres in sshd_config drop-in
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/20-pgclerk-deny-postgres.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by pgclerk / os_rhel_baseline.
+      # Operators ssh as themselves and sudo -iu postgres locally.
+      {% if baseline_allow_postgres_from | length > 0 %}
+      # Strict for everyone except cluster peers (pgBackRest needs the
+      # exception for cross-host pg_control reads + archive-push).
+      Match Address {{ baseline_allow_postgres_from | map('regex_replace', '^', '!') | join(',') }}
+          DenyUsers postgres
+      {% else %}
+      DenyUsers postgres
+      {% endif %}
+  when:
+  - baseline_lock_postgres_login | bool
+  - baseline_db_user == 'postgres'
+  notify: Restart sshd
+
+# Belt-and-braces: lock the postgres user's password too, so even an
+# already-established session can't be promoted via su -p / login.  This
+# does NOT change the shell -- passwordless `su - postgres` from root
+# still works because root doesn't need to satisfy PAM auth.
+- name: Lock the postgres user password
+  ansible.builtin.user:
+    name: postgres
+    password_lock: true
+  when:
+  - baseline_lock_postgres_login | bool
+  - baseline_db_user == 'postgres'
+  register: _baseline_pg_lock
+  failed_when:
+  - _baseline_pg_lock.failed | default(false)
+  - "'does not exist' not in (_baseline_pg_lock.msg | default(''))"

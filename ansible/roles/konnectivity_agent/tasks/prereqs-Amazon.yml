@@ -1,0 +1,6 @@
+---
+- name: Install runtime pre-reqs
+  ansible.builtin.dnf:
+    name:
+    - ca-certificates
+    state: present

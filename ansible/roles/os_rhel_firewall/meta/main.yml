@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  author: pgclerk
+  description: firewalld helpers - port + source-CIDR rules and named services.
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions:
+    - "8"
+    - "9"
+  - name: Amazon
+    versions:
+    - "2023"
+  galaxy_tags:
+  - firewall
+  - firewalld
+  - security
+
+dependencies: []

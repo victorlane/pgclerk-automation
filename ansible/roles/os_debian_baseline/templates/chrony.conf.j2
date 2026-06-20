@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+{% for server in baseline_chrony_servers %}
+server {{ server }} {{ baseline_chrony_options | join(' ') }}
+{% endfor %}
+{% for pool in baseline_chrony_pools %}
+pool {{ pool }} {{ baseline_chrony_options | join(' ') }}
+{% endfor %}
+
+driftfile /var/lib/chrony/chrony.drift
+makestep 1.0 3
+rtcsync
+logdir /var/log/chrony

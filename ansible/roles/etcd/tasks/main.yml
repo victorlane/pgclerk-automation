@@ -1,0 +1,37 @@
+---
+- name: Assert cluster group is populated
+  ansible.builtin.assert:
+    that:
+    - etcd_inventory_group in groups
+    - groups[etcd_inventory_group] | length >= 1
+    fail_msg: "etcd_inventory_group '{{ etcd_inventory_group }}' is empty or missing from inventory"
+
+- name: Mount dedicated etcd data device (when configured)
+  ansible.builtin.import_tasks: disk.yml
+  when: etcd_data_device | length > 0
+
+- name: Install etcd binaries
+  ansible.builtin.import_tasks: install.yml
+
+- name: Emit deprecation warning for plaintext etcd
+  ansible.builtin.debug:
+    msg:
+    - "############################################################"
+    - "DEPRECATION: etcd_enable_tls=false is deprecated and will be"
+    - "removed in the next major pgclerk release. Plaintext etcd"
+    - "leaks DCS state, Patroni passwords, and replication slot info"
+    - "to anything on the wire. Switch to TLS (the default) and"
+    - "supply your own CA via etcd_tls_ca_cert / etcd_tls_ca_key"
+    - "or let the role generate one."
+    - "############################################################"
+  when: not (etcd_enable_tls | bool)
+
+- name: Generate and distribute TLS material
+  ansible.builtin.import_tasks: tls.yml
+  when: etcd_enable_tls | bool
+
+- name: Configure etcd
+  ansible.builtin.import_tasks: configure.yml
+
+- name: Verify cluster health
+  ansible.builtin.import_tasks: health.yml

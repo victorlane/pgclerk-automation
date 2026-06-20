@@ -1,0 +1,45 @@
+---
+- name: Assert supported OS
+  ansible.builtin.assert:
+    that:
+    - ansible_facts['os_family'] in ['RedHat', 'Debian']
+      or ansible_facts['distribution'] == 'Amazon'
+    fail_msg: >-
+      The pgbouncer role supports RedHat, Debian, and Amazon Linux;
+      got distribution='{{ ansible_facts['distribution'] }}',
+      os_family='{{ ansible_facts['os_family'] }}'.
+
+- name: Assert supported pool mode
+  ansible.builtin.assert:
+    that: pgbouncer_pool_mode in ['transaction', 'session', 'statement']
+    fail_msg: "pgbouncer_pool_mode must be 'transaction', 'session', or 'statement'; got '{{ pgbouncer_pool_mode }}'."
+
+- name: Assert host participates in pgbouncer topology
+  ansible.builtin.assert:
+    that: "'pgbouncer_servers' in group_names"
+    fail_msg: >-
+      Host {{ inventory_hostname }} is not in the 'pgbouncer_servers' inventory
+      group; the pgbouncer role has nothing to do here. Add the host to
+      pgbouncer_servers (standalone pooler) or to both postgres_servers and
+      pgbouncer_servers (co-located).
+
+# Mirror the postgresql role's variant derivation so PGDG repo handling,
+# package names, and the runtime user can dispatch per-family without
+# when-guards in the common files.
+- name: Determine OS install variant
+  ansible.builtin.set_fact:
+    _pg_os_variant: >-
+      {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+         else ansible_facts['os_family'] }}
+
+- name: Load OS-specific variables
+  ansible.builtin.include_vars: "{{ _pg_os_variant }}.yml"
+
+- name: Install pgbouncer
+  ansible.builtin.include_tasks: install.yml
+
+- name: Render pgbouncer configuration
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Enable and start pgbouncer service
+  ansible.builtin.include_tasks: service.yml

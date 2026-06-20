@@ -1,0 +1,31 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Prometheus exporter for host-level metrics
+Documentation=https://github.com/prometheus/node_exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ node_exporter_user }}
+Group={{ node_exporter_group }}
+ExecStart={{ node_exporter_package_bin }} \
+  --web.listen-address={{ node_exporter_listen_address }} \
+{% if node_exporter_enable_textfile_collector %}
+  --collector.textfile.directory={{ node_exporter_textfile_dir }} \
+{% endif %}
+{% for flag in node_exporter_extra_flags %}
+  {{ flag }} \
+{% endfor %}
+  $NODE_EXPORTER_EXTRA_OPTS
+
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+
+[Install]
+WantedBy=multi-user.target

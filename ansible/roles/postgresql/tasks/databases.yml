@@ -1,0 +1,66 @@
+---
+# Pre-create the per-user Ansible tmp dir for postgres so the first become
+# drop doesn't trigger the "remote_tmp ... did not exist and was created
+# with a mode of 0700" warning. The path matches ansible.cfg's
+# remote_tmp = /tmp/.ansible-${USER}/tmp.
+- name: Pre-create Ansible tmp dir for postgres become_user
+  ansible.builtin.file:
+    path: /tmp/.ansible-postgres/tmp
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+
+# Default template: postgresql_template_db when hardened template is on (it
+# exists and is frozen at that point), otherwise omit (postgres uses
+# template1).
+- name: Ensure databases exist
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ item.name }}"
+    encoding: "{{ item.encoding | default('UTF8') }}"
+    lc_collate: "{{ item.lc_collate | default(omit) }}"
+    lc_ctype: "{{ item.lc_ctype | default(omit) }}"
+    template: "{{ item.template | default(postgresql_template_db if (postgresql_apply_hardened_template | bool) else omit) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ postgresql_databases }}"
+
+# Grant the hardened base roles only when hardened template is on -- they
+# don't exist otherwise.
+- name: Grant base roles on application databases (hardened-template mode)
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ item.name }}"
+    query: "GRANT CONNECT ON DATABASE {{ item.name | quote }} TO db_readonly, db_readwrite, db_admin"
+  loop: "{{ postgresql_databases }}"
+  when:
+  - postgresql_apply_hardened_template | bool
+  - item.state | default('present') == 'present'
+
+- name: Ensure users exist
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    role_attr_flags: "{{ item.role_attr_flags | default(omit) }}"
+    state: present
+  loop: "{{ postgresql_users }}"
+  no_log: true
+
+- name: Grant privileges to users
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_privs:
+    login_db: "{{ item.db }}"
+    roles: "{{ item.name }}"
+    type: database
+    privs: "{{ item.priv }}"
+    state: present
+  loop: "{{ postgresql_users }}"
+  when:
+  - item.db is defined
+  - item.priv is defined
+  no_log: true

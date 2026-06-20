@@ -1,0 +1,21 @@
+---
+# Debian/Ubuntu PGDG ships PostgreSQL via apt.postgresql.org. The package's
+# post-install runs pg_createcluster automatically for the 'main' cluster
+# under /var/lib/postgresql/<ver>/main with conf at
+# /etc/postgresql/<ver>/main. We use that default and don't fight pg_createcluster.
+postgresql_packages:
+- "postgresql-{{ postgresql_version }}"
+- "postgresql-contrib-{{ postgresql_version }}"
+- "python3-psycopg2"
+
+# Debian PGDG cluster: postgresql@<ver>-main.service is the templated unit
+# instance generated from postgresql@.service. pg_ctlcluster (called by
+# ExecStart) reads its data dir from /etc/postgresql/<ver>/main/postgresql.conf.
+postgresql_service: "postgresql@{{ postgresql_version }}-main"
+postgresql_data_dir: "/var/lib/postgresql/{{ postgresql_version }}/main"
+postgresql_config_dir: "/etc/postgresql/{{ postgresql_version }}/main"
+postgresql_conf_path: "{{ postgresql_config_dir }}/postgresql.conf"
+postgresql_hba_path: "{{ postgresql_config_dir }}/pg_hba.conf"
+postgresql_install_log: "/var/log/postgresql_{{ postgresql_version }}_install_{{ ansible_hostname }}_{{ ansible_date_time.date | replace('-', '') }}.log"
+postgresql_log_dir: "/var/log/postgresql"
+postgresql_bin_path: "/usr/lib/postgresql/{{ postgresql_version }}/bin"

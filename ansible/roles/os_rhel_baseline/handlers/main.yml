@@ -1,0 +1,19 @@
+---
+- name: Restart chronyd
+  ansible.builtin.systemd:
+    name: chronyd
+    state: restarted
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+# Validate sshd_config before restart so a typo in baseline_sshd_settings
+# doesn't lock us out.  sshd -t reads /etc/ssh/sshd_config (which Includes
+# /etc/ssh/sshd_config.d/*) so the drop-in is in scope.
+- name: Restart sshd
+  ansible.builtin.systemd:
+    name: sshd
+    state: restarted
+    daemon_reload: true
+  listen: Restart sshd

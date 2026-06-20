@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  author: pgclerk
+  description: Apply a declarative list of filesystem mounts (NFS, block, etc.).
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions:
+    - "8"
+    - "9"
+  - name: Amazon
+    versions:
+    - "2023"
+  galaxy_tags:
+  - mount
+  - nfs
+  - storage
+
+dependencies: []

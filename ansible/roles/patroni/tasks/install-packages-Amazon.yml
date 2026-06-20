@@ -1,0 +1,4 @@
+---
+# AL2023 uses dnf with the same package names as RHEL for these.
+- name: Apply RedHat-pattern Python tooling install
+  ansible.builtin.include_tasks: install-packages-RedHat.yml

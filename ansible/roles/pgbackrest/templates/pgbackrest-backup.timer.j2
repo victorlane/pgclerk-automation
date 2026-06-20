@@ -1,0 +1,11 @@
+## {{ ansible_managed }}
+[Unit]
+Description=Run pgBackRest {{ _pgbr_backup_type }} backup on schedule
+
+[Timer]
+OnCalendar={{ _pgbr_schedule }}
+Persistent=true
+Unit=pgbackrest-backup-{{ _pgbr_backup_type }}.service
+
+[Install]
+WantedBy=timers.target

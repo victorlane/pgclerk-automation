@@ -1,0 +1,47 @@
+---
+# HAProxy in front of a Patroni cluster. Clients connect to
+# {haproxy_host}:{haproxy_floating_port} as if it were a single Postgres,
+# and HAProxy steers the connection to whichever member currently answers
+# 200 OK on Patroni's REST /master endpoint -- so the leader-replica
+# topology is invisible to applications.
+#
+# An optional read-only listener on haproxy_readonly_port routes to any
+# healthy replica via Patroni's /replica endpoint -- handy for analytics
+# workloads or pgbouncer pools you want pinned to read-only traffic.
+
+# Floating (read-write) port. Apps connect here. Default 5432 makes
+# HAProxy a drop-in replacement for a direct PG connection string.
+haproxy_floating_port: 5432
+
+# Read-only port. Routes to any healthy replica (Patroni reports
+# /replica = 200). Set haproxy_enable_readonly: false to skip this
+# listener entirely (saves a port + simpler config).
+haproxy_readonly_port: 5433
+haproxy_enable_readonly: true
+
+# Stats listener. Plain HTTP, no auth -- bind to a management interface
+# or front it with the OS firewall. `curl http://<haproxy>:7000/` from
+# any operator host returns the canonical HAProxy stats dashboard.
+haproxy_stats_port: 7000
+
+# Patroni REST API port -- HAProxy probes /master and /replica on this
+# port for every backend. Must match patroni_restapi_port on the
+# cluster nodes.
+haproxy_patroni_rest_port: 8008
+
+# Health-check timing.
+#   check_interval - how often HAProxy hits the Patroni REST endpoint
+#                    (1s is the sweet spot: fast failover detection
+#                    without hammering Patroni).
+#   check_timeout  - per-probe timeout. 500ms catches a hung leader
+#                    without false-positive failovers under load.
+#   inter_check    - default-server "inter" attribute, same intent.
+haproxy_check_interval_ms: 1000
+haproxy_check_timeout_ms: 500
+haproxy_inter_check_ms: 1000
+
+# Inventory group whose members form the Patroni cluster to balance.
+# Single-cluster deployments leave this at the default. Multi-cluster
+# shops put each HAProxy pool in its own group_vars file and override
+# this per pool so one HAProxy node maps to one Patroni cluster.
+haproxy_cluster_group: postgres_servers

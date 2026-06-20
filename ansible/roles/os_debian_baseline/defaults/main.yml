@@ -1,0 +1,113 @@
+---
+# Timezone applied via timedatectl.
+baseline_timezone: UTC
+
+# Chrony / NTP. If baseline_chrony_servers is empty the distro default
+# /etc/chrony/chrony.conf is left untouched -- the package is still installed
+# and the service is still enabled.
+baseline_chrony_servers: []
+baseline_chrony_pools: []
+baseline_chrony_options:
+- iburst
+
+# sysctl tuning for a database host. The role merges baseline_sysctl on
+# top of baseline_sysctl_defaults so the consumer only needs to declare
+# overrides.
+baseline_sysctl_defaults:
+  vm.swappiness: 1
+  vm.overcommit_memory: 2
+  vm.overcommit_ratio: 80
+  kernel.shmmax: "{{ (ansible_facts.memtotal_mb | int * 1024 * 1024 * 0.5) | int }}"
+  net.core.somaxconn: 4096
+  net.ipv4.tcp_keepalive_time: 600
+  vm.panic_on_oom: 0
+  vm.dirty_background_ratio: 5
+  vm.dirty_ratio: 10
+baseline_sysctl: {}
+baseline_sysctl_file: /etc/sysctl.d/90-pgclerk.conf
+
+# ulimits applied via /etc/security/limits.d/90-<db_user>.conf.
+baseline_db_user: postgres
+baseline_limits:
+- domain: "{{ baseline_db_user }}"
+  limit_type: soft
+  limit_item: nofile
+  value: 65536
+- domain: "{{ baseline_db_user }}"
+  limit_type: hard
+  limit_item: nofile
+  value: 65536
+- domain: "{{ baseline_db_user }}"
+  limit_type: soft
+  limit_item: nproc
+  value: 4096
+- domain: "{{ baseline_db_user }}"
+  limit_type: hard
+  limit_item: nproc
+  value: 4096
+
+# Transparent Huge Pages.
+baseline_disable_thp: true
+
+# /etc/hosts management. Off by default.
+baseline_manage_hosts: false
+baseline_hosts_ip: "{{ ansible_facts.default_ipv4.address | default('') }}"
+baseline_hosts_fqdn: "{{ ansible_facts.fqdn | default(ansible_facts.hostname) }}"
+baseline_hosts_aliases: []
+
+# ----- Hardening ------------------------------------------------------------
+# Mirrors os_rhel_baseline; see that role's defaults for the rationale.
+
+baseline_apply_hardening: true
+
+baseline_protect_sshd: true
+baseline_sshd_oom_score_adjust: -1000
+baseline_protect_logind: true
+
+baseline_postgres_isolation: true
+baseline_postgres_memory_high_fraction: 0.90
+baseline_postgres_memory_max_fraction:  0.95
+baseline_postgres_cpu_weight: 200
+baseline_postgres_io_weight: 200
+baseline_postgres_service_unit: ""
+
+baseline_sshd_hardening: true
+baseline_sshd_settings:
+  PasswordAuthentication: "no"
+  PermitRootLogin: "no"
+  KbdInteractiveAuthentication: "no"
+  X11Forwarding: "no"
+  AllowAgentForwarding: "no"
+  AllowTcpForwarding: "no"
+  PermitUserEnvironment: "no"
+  MaxAuthTries: "3"
+  MaxSessions: "5"
+  LoginGraceTime: "30s"
+  ClientAliveInterval: "60"
+  ClientAliveCountMax: "3"
+  Banner: none
+
+baseline_lock_postgres_login: true
+
+# When the postgres login is locked but a list of CIDRs is supplied here,
+# sshd accepts postgres logins ONLY from those CIDRs (via a Match Address
+# block in the same drop-in).  Used by pgBackRest topologies where the
+# backup server SSHes to PG nodes (and vice versa) as the postgres user.
+# Leave empty to keep postgres fully denied at the sshd layer.
+baseline_allow_postgres_from: []
+
+# ----- Network egress -------------------------------------------------------
+# See os_rhel_baseline/defaults/main.yml for the mode catalogue.
+baseline_network_egress: open    # open | proxy | blocked
+
+baseline_proxy_url: ""
+baseline_proxy_https_url: "{{ baseline_proxy_url }}"
+baseline_proxy_no_proxy:
+- localhost
+- 127.0.0.1
+- ::1
+- 169.254.169.254
+- .internal
+- .local
+
+baseline_egress_allow: []

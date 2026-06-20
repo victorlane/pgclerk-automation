@@ -1,0 +1,134 @@
+---
+# PGDG apt repo install flow. We use the modern signed-by keyring pattern.
+- name: Install prerequisites for PGDG apt repo
+  ansible.builtin.apt:
+    name:
+    - apt-transport-https
+    - ca-certificates
+    - curl
+    - gnupg
+    - lsb-release
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure /etc/apt/keyrings exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the PGDG ASCII-armored signing key
+  ansible.builtin.get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /etc/apt/keyrings/pgdg.asc
+    owner: root
+    group: root
+    mode: "0644"
+  register: _pgdg_key_dl
+
+- name: Check whether the binary PGDG keyring already exists
+  ansible.builtin.stat:
+    path: /etc/apt/keyrings/pgdg.gpg
+  register: _pgdg_keyring
+
+- name: Convert the PGDG key to the binary keyring format
+  ansible.builtin.command: >
+    gpg --batch --yes --dearmor
+    --output /etc/apt/keyrings/pgdg.gpg
+    /etc/apt/keyrings/pgdg.asc
+  when: _pgdg_key_dl is changed or not _pgdg_keyring.stat.exists
+  changed_when: true
+
+- name: Fix permissions on PGDG keyring
+  ansible.builtin.file:
+    path: /etc/apt/keyrings/pgdg.gpg
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure the PGDG apt source list
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/pgdg.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      deb [signed-by=/etc/apt/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt {{ ansible_facts['distribution_release'] }}-pgdg main
+  register: _pgdg_apt_list
+
+- name: Refresh apt cache after PGDG repo configuration
+  ansible.builtin.apt:
+    update_cache: true
+  when: _pgdg_apt_list is changed
+
+# The Debian PGDG postgresql-<ver> package's post-install runs pg_createcluster
+# automatically for the 'main' cluster under /var/lib/postgresql/<ver>/main
+# with conf at /etc/postgresql/<ver>/main -- which is exactly the path we
+# point postgresql_data_dir + postgresql_config_dir at. So: just install the
+# package, the cluster is provisioned with no extra dance.
+- name: Install PostgreSQL packages
+  ansible.builtin.apt:
+    name: "{{ postgresql_packages }}"
+    state: present
+
+# Patroni mode: drop the auto-created cluster so Patroni can bootstrap fresh.
+- name: Check whether the package's default cluster exists
+  ansible.builtin.stat:
+    path: "{{ postgresql_data_dir }}/PG_VERSION"
+  register: pg_data_initialized
+
+- name: Drop auto-created cluster in patroni mode
+  ansible.builtin.command: "pg_dropcluster --stop {{ postgresql_version }} main"
+  when:
+  - postgresql_ha_mode == 'patroni'
+  - pg_data_initialized.stat.exists
+  changed_when: true
+
+# Standalone mode: if a non-default locale or ICU is requested AND the
+# package-created cluster has the wrong locale, recreate it. pg_createcluster
+# doesn't have an in-place locale change, so this is the only safe path.
+- name: Detect cluster locale (standalone, when overrides may matter)
+  ansible.builtin.command: "pg_lsclusters --no-header"
+  register: _pg_lsclusters
+  changed_when: false
+  when:
+  - postgresql_ha_mode == 'standalone'
+  - pg_data_initialized.stat.exists
+
+# Note: ICU locale providers landed in PG 15. pg_createcluster on Debian 11
+# may be too old to forward --locale-provider/--icu-locale cleanly; the PGDG
+# repo's postgresql-common usually pulls in a new-enough version. If you
+# need ICU and pg_createcluster rejects the flags, set
+# postgresql_locale_provider=libc and override postgresql_locale.
+- name: Recreate cluster when locale/provider differs from defaults
+  ansible.builtin.command: >
+    pg_createcluster
+    --locale={{ postgresql_locale }}
+    --auth-local=peer
+    --auth-host=scram-sha-256
+    {{ postgresql_version }} main
+    {% if postgresql_locale_provider == 'icu' %}
+    --
+    --locale-provider=icu
+    --icu-locale={{ postgresql_icu_locale }}
+    {% endif %}
+  args:
+    creates: "{{ postgresql_data_dir }}/PG_VERSION"
+  when:
+  - postgresql_ha_mode == 'standalone'
+  - not pg_data_initialized.stat.exists
+  register: pg_initdb_result
+
+- name: Write pg_createcluster output to install log
+  ansible.builtin.copy:
+    content: "{{ pg_initdb_result.stdout | default('') }}\n{{ pg_initdb_result.stderr | default('') }}"
+    dest: "{{ postgresql_install_log }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+  - postgresql_ha_mode == 'standalone'
+  - pg_initdb_result is changed

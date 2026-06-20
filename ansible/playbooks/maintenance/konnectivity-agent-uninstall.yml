@@ -1,0 +1,44 @@
+---
+# Cleanly remove the konnectivity agent from a host: stop + disable the
+# unit, drop the binary, env file, and data dir, but leave the system
+# user in place (deleting it would orphan any leftover files an operator
+# placed under /var/lib/konnectivity).
+#
+# Run when decommissioning a node or migrating it out of the konnectivity
+# fleet. The agent's server-side registration is also revoked separately
+# from the pgclerk UI; this playbook only takes care of the host side.
+- name: Konnectivity · uninstall agent
+  hosts: konnectivity_targets
+  become: true
+  gather_facts: false
+  tasks:
+  - name: Stop + disable konnectivity-agent
+    ansible.builtin.service:
+      name: konnectivity-agent
+      state: stopped
+      enabled: false
+    failed_when: false
+
+  - name: Remove systemd unit
+    ansible.builtin.file:
+      path: /etc/systemd/system/konnectivity-agent.service
+      state: absent
+    notify: reload systemd
+
+  - name: Remove binary
+    ansible.builtin.file:
+      path: /usr/local/bin/konnectivity-agent
+      state: absent
+
+  - name: Remove env + token + data dir
+    ansible.builtin.file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+    - /etc/konnectivity
+    - /var/lib/konnectivity
+
+  handlers:
+  - name: reload systemd
+    ansible.builtin.systemd:
+      daemon_reload: true

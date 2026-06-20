@@ -1,0 +1,11 @@
+---
+- name: Install pgbouncer package
+  ansible.builtin.include_tasks: "install-packages-{{ _pg_os_variant }}.yml"
+
+- name: Ensure pgbouncer config directory exists
+  ansible.builtin.file:
+    path: "{{ pgbouncer_config_dir }}"
+    state: directory
+    owner: "{{ pgbouncer_user }}"
+    group: "{{ pgbouncer_group }}"
+    mode: "0750"

@@ -1,17 +1,9 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         os-baseline
-# title:       OS · baseline hardening
-# category:    install
-# surface:     linux
-# destructive: False
-
-- name: "OS · baseline hardening"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
-  gather_facts: false
-  tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'os-baseline'"
-          - "Replace ansible/playbooks/install/os-baseline.yml with the real playbook."
+# Atom: OS baseline only. Family-agnostic wrapper picks the right per-family
+# role (rhel/debian) and lays down packages, sysctls, mounts, firewall.
+- name: OS baseline
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - role: os_baseline

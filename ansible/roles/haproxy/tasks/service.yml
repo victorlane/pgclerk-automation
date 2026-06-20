@@ -1,0 +1,34 @@
+---
+# haproxy.service shipped by the distro packages does not set Restart=,
+# so a crash leaves the load balancer down until ops notices. The drop-in
+# below makes systemd restart-on-failure with a small backoff so transient
+# crashes self-heal without masking a real outage.
+- name: Ensure haproxy systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/haproxy.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install Restart=on-failure systemd drop-in
+  ansible.builtin.template:
+    src: restart.conf.j2
+    dest: /etc/systemd/system/haproxy.service.d/restart.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+  - Reload systemd daemon
+  - Restart haproxy
+
+# Flush so the daemon-reload runs before we start the unit -- otherwise
+# the first start ignores the drop-in until the next systemctl reload.
+- name: Apply systemd drop-in before starting haproxy
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure haproxy service is started and enabled
+  ansible.builtin.service:
+    name: haproxy
+    state: started
+    enabled: true

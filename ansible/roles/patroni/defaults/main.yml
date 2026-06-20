@@ -1,0 +1,140 @@
+---
+# Shared postgresql_* defaults
+# --------------------------------------------------------------------------
+# These mirror roles/postgresql/defaults/main.yml.  patroni.yml.j2 references
+# them directly because Patroni's bootstrap.dcs.postgresql.parameters block
+# is rendered from the same knobs an operator would set on the standalone
+# postgresql role.  In a play that lists ONLY `roles: [patroni]` (the HA
+# Stage 3 in playbooks/ha.yml), the postgresql role's defaults don't load,
+# so Patroni would crash on undefined-var.  Setting the same defaults here
+# keeps the role self-sufficient; an operator's group_vars / extra-vars
+# value still wins because role-defaults precedence is the lowest.
+#
+# Keep in sync with roles/postgresql/defaults/main.yml -- this file's
+# values must NOT diverge from those.
+postgresql_ha_mode: patroni
+postgresql_port: 5432
+postgresql_max_connections: 100
+postgresql_shared_buffers: ""
+postgresql_effective_cache_size: ""
+postgresql_maintenance_work_mem: ""
+postgresql_work_mem: ""
+postgresql_log_dirname: "pg_log"
+postgresql_icu_locale: "en-US"
+postgresql_locale_provider: libc
+postgresql_locale: "C.UTF-8"
+postgresql_shared_preload_libraries:
+- pg_stat_statements
+postgresql_hba_entries:
+- { type: local, database: all, user: postgres, auth_method: peer }
+- { type: local, database: all, user: all, auth_method: peer }
+- { type: host, database: all, user: all, address: "127.0.0.1/32", auth_method: scram-sha-256 }
+- { type: host, database: all, user: all, address: "::1/128", auth_method: scram-sha-256 }
+
+# Patroni-specific defaults
+# --------------------------------------------------------------------------
+
+# Patroni release. Pinned because Patroni's YAML schema and patronictl output
+# both shift between minor versions; consumers can override per-env.
+patroni_version: "3.3.2"
+
+# Cluster scope -- shared by all members of one Patroni cluster. Becomes the
+# etcd key prefix (/service/<scope>/...).
+patroni_scope: "pgclerk"
+
+# Where DCS (etcd) lives. Default assumes etcd runs embedded on the same
+# postgres_servers hosts; for an external etcd quorum, point this at the
+# external inventory group.
+patroni_dcs_inventory_group: "postgres_servers"
+
+# Synchronous replication. With synchronous_mode=true Patroni promotes only
+# replicas that are caught up. synchronous_mode_strict=true additionally
+# refuses writes when no sync standby is healthy (RTO over availability).
+patroni_synchronous_mode: false
+patroni_synchronous_mode_strict: false
+
+# Opinionated data-loss budget. When set to anything other than 'none',
+# data-loss-budget.yml overrides patroni_synchronous_mode,
+# patroni_synchronous_mode_strict, and patroni_max_lag_on_failover with
+# a packaged preset. See roles/patroni/README.md for the trade-off
+# table.
+#
+#   none    - defaults above (async, ~1 MiB failover lag tolerance).
+#             Maximum throughput, possible data loss on autofailover.
+#   minimal - sync_mode=true, strict=false, lag=1 MiB. Sync when a
+#             replica is healthy; falls back to async if all replicas
+#             are unreachable. Catches most failover data loss without
+#             write-stalling the primary when everybody is offline.
+#   low     - sync_mode=true, strict=false, lag=16 KiB. Same as minimal
+#             but failover only considers nearly-zero-lag replicas.
+#             Fewer eligible candidates -> longer failover when the
+#             closest replica is also down.
+#   zero    - sync_mode=true, strict=true, lag=0. RPO=0 in the failover
+#             window. Primary REFUSES writes when no sync standby is
+#             healthy; expect outage windows in exchange for the
+#             guarantee. Use only when the business has explicitly
+#             chosen RTO over RPO.
+patroni_data_loss_budget: none
+
+# Virtualenv for Patroni + its etcd3 driver. Kept outside the postgres home
+# so a PGDATA wipe doesn't take the agent with it.
+patroni_venv: /opt/patroni/venv
+
+# Bootstrap users. Override these via a vault file or -e @secrets.yml in
+# anything resembling production. Defaults are intentionally obvious so
+# unmodified deploys fail a security review.
+patroni_admin_password: "changeme-admin"
+patroni_replicator_password: "changeme-replicator"
+patroni_superuser_password: "changeme-superuser"
+patroni_rewind_password: "changeme-rewind"
+
+# REST API port -- patronictl, HAProxy health checks, monitoring all hit this.
+patroni_restapi_port: 8008
+
+# CIDR allowed to perform streaming replication. Consumer must narrow this
+# per-environment; 10/8 is a placeholder that matches our dev NAT.
+patroni_replication_cidr: "10.0.0.0/8"
+
+# DCS timing. ttl > loop_wait + retry_timeout is enforced by Patroni.
+patroni_ttl: 30
+patroni_loop_wait: 10
+patroni_retry_timeout: 10
+
+# A replica lagging more than this (bytes) is excluded from failover
+# candidates. 1 MiB is conservative; raise for write-heavy clusters where
+# replicas legitimately drift further behind.
+patroni_max_lag_on_failover: 1048576
+
+# Wait-for-cluster knobs (primary-only post-bootstrap check).
+patroni_wait_for_cluster_retries: 30
+patroni_wait_for_cluster_delay: 10
+
+# etcd TLS for the Patroni client. Defaults to the same value as the etcd
+# role's etcd_enable_tls so an operator who flips one flag does not have to
+# remember to flip the other. Override to force a mismatch (e.g. external
+# etcd run with a different posture).
+patroni_etcd_use_tls: "{{ etcd_enable_tls | default(true) }}"
+
+# Watchdog -- self-fence a stuck primary so Patroni's demotion can succeed.
+#
+# patroni_watchdog_mode values:
+#   off       - no watchdog (only safe in dev / single-node).
+#   automatic - use the watchdog when /dev/watchdog is present, fall back
+#               gracefully when it is not.  Recommended default.
+#   required  - refuse to run the primary unless the watchdog is healthy.
+#               Use in production once /dev/watchdog is verified on every
+#               node.
+#
+# Hardware-watchdog selection:
+#   - The simplest portable choice is the kernel softdog module (software
+#     watchdog).  This role loads `softdog` and persists it via
+#     /etc/modules-load.d/pgclerk-watchdog.conf.
+#   - On bare metal with iTCO (Intel) or hpwdt (HP), wire the proper
+#     module name into patroni_watchdog_kernel_module instead -- the
+#     persistence file picks it up.
+#   - On clouds where /dev/watchdog is provided by the hypervisor (some
+#     EC2 metal instances do this) the modprobe step is a no-op.
+patroni_watchdog_mode: automatic
+patroni_watchdog_device: /dev/watchdog
+patroni_watchdog_kernel_module: softdog
+patroni_watchdog_safety_margin: 5

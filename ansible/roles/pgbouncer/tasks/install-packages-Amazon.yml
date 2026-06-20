@@ -1,0 +1,7 @@
+---
+# AL2023 ships pgbouncer in its main repo -- no PGDG needed (and PGDG
+# does not publish AL2023 RPMs anyway).
+- name: Install pgbouncer via dnf
+  ansible.builtin.dnf:
+    name: "{{ pgbouncer_package }}"
+    state: present

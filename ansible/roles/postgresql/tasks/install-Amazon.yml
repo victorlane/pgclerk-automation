@@ -1,0 +1,62 @@
+---
+# Amazon Linux 2023 ships PostgreSQL natively via dnf. PGDG does not publish
+# AL2023-compatible RPMs, so we use the distro packages and only the
+# PG versions present in the AL2023 main repos.
+- name: Assert PG version available on Amazon Linux 2023
+  ansible.builtin.assert:
+    that: postgresql_version in ['15', '16']
+    fail_msg: >-
+      Amazon Linux 2023 ships PostgreSQL 15 and 16 only via native dnf.
+      PG {{ postgresql_version }} would require building from source or
+      using a custom repository (out of scope for this role). Pick 15 or 16,
+      or run on RHEL/Oracle/Rocky/Alma which support 15-18 via PGDG.
+
+- name: Install PostgreSQL packages
+  ansible.builtin.dnf:
+    name: "{{ postgresql_packages }}"
+    state: present
+
+# postgresql_data_dir is the native AL2023 default (/var/lib/pgsql/data).
+# The package post-install creates the directory; postgresql-setup --initdb
+# (wrapped by initdb) handles SELinux contexts.
+- name: Check if PostgreSQL data directory is initialized
+  ansible.builtin.stat:
+    path: "{{ postgresql_data_dir }}/PG_VERSION"
+  register: pg_data_initialized
+
+- name: Initialize PostgreSQL cluster (libc locale)
+  ansible.builtin.command:
+    argv:
+    - /usr/bin/postgresql-setup
+    - --initdb
+  environment:
+    PGSETUP_INITDB_OPTIONS: "--locale={{ postgresql_locale }}"
+  when:
+  - not pg_data_initialized.stat.exists
+  - postgresql_ha_mode == 'standalone'
+  - postgresql_locale_provider == 'libc'
+  register: _pg_initdb_libc
+
+- name: Initialize PostgreSQL cluster (ICU locale)
+  ansible.builtin.command:
+    argv:
+    - /usr/bin/postgresql-setup
+    - --initdb
+  environment:
+    PGSETUP_INITDB_OPTIONS: "--locale-provider=icu --icu-locale={{ postgresql_icu_locale }} --locale={{ postgresql_locale }}"
+  when:
+  - not pg_data_initialized.stat.exists
+  - postgresql_ha_mode == 'standalone'
+  - postgresql_locale_provider == 'icu'
+  register: _pg_initdb_icu
+
+- name: Write initdb output to install log
+  ansible.builtin.copy:
+    content: "{{ (_pg_initdb_libc.stdout | default('')) ~ (_pg_initdb_icu.stdout | default('')) }}\n{{ (_pg_initdb_libc.stderr | default('')) ~ (_pg_initdb_icu.stderr | default('')) }}"
+    dest: "{{ postgresql_install_log }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+  - not pg_data_initialized.stat.exists
+  - postgresql_ha_mode == 'standalone'

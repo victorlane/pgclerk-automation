@@ -1,0 +1,92 @@
+---
+# Listener. 6432 is the pgbouncer convention; keep it so clients can
+# switch ports without changing host. Listen on 0.0.0.0 so co-located
+# deployments still work via the loopback path (firewall is the gate).
+pgbouncer_listen_address: "0.0.0.0"
+pgbouncer_listen_port: 6432
+
+# Pooling mode.
+#   transaction - the default for web/SaaS workloads; connections are
+#                 returned to the pool at COMMIT/ROLLBACK. Prepared
+#                 statements + session-state features (LISTEN, SET) are
+#                 incompatible -- use session mode for those.
+#   session     - connection is held for the lifetime of a client session.
+#   statement   - returned after every statement; almost never what you want.
+pgbouncer_pool_mode: transaction
+
+# Connection limits.
+#   max_client_conn      - cap on total client connections to pgbouncer.
+#   default_pool_size    - server-side connections per (user, db) pool.
+#   min_pool_size        - keep at least N warm connections per pool.
+#   reserve_pool_size    - extra slots opened when a pool is exhausted.
+#   reserve_pool_timeout - seconds a client waits before reserve kicks in.
+#   server_idle_timeout  - drop idle backend connections after N seconds.
+#   query_timeout        - kill queries running longer than N seconds.
+#                          0 = disabled, set per-customer for runaway-query
+#                          protection.
+pgbouncer_max_client_conn: 1000
+pgbouncer_default_pool_size: 25
+pgbouncer_min_pool_size: 0
+pgbouncer_reserve_pool_size: 5
+pgbouncer_reserve_pool_timeout: 3
+pgbouncer_server_idle_timeout: 600
+pgbouncer_query_timeout: 0
+
+# Admin / stats consoles. Connect with:
+#   psql -h <host> -p 6432 -U <admin_user> pgbouncer
+# Admin users can PAUSE/RESUME/RELOAD; stats users get SHOW STATS / SHOW POOLS.
+# Both lists must also appear in pgbouncer_users (with hashes) so they can
+# actually authenticate.
+pgbouncer_admin_users:
+- postgres
+pgbouncer_stats_users:
+- stats
+
+# Authentication. pgbouncer authenticates clients against a static
+# userlist.txt (rendered from pgbouncer_users). For dbs with auth_user set,
+# pgbouncer queries pg_shadow via that user to get the SCRAM hash at
+# runtime -- but the auth_user itself MUST still be in userlist.txt.
+#
+# Default auth method on the listener. scram-sha-256 is the only sensible
+# choice for new deploys; md5 / plain are accepted as escape hatches.
+pgbouncer_auth_type: scram-sha-256
+pgbouncer_auth_file: /etc/pgbouncer/userlist.txt
+
+# Upstream databases. Each entry becomes one [databases] section line in
+# pgbouncer.ini. The 'name' is what clients connect to; 'dbname' (if set)
+# is the actual db name on the backend, which is useful for tenant
+# multiplexing (one backend, many client-facing names).
+#
+# Example:
+#   pgbouncer_databases:
+#   - name: appdb
+#     host: 10.0.0.10           # 127.0.0.1 for co-located deploys
+#     port: 5432
+#     dbname: appdb
+#     pool_size: 50             # overrides default_pool_size for this db
+#     auth_user: pgbouncer_auth # lets pgbouncer look up other users via pg_shadow
+pgbouncer_databases: []
+
+# User -> SCRAM hash mapping rendered into userlist.txt. Hashes are
+# extracted from a PG node with:
+#   SELECT rolname, rolpassword FROM pg_authid WHERE rolname IN (...);
+# Operator supplies them via extra-vars or group_vars; defaults are empty.
+#
+# Example:
+#   pgbouncer_users:
+#   - name: appuser
+#     password: "SCRAM-SHA-256$4096:..."   # verbatim from pg_shadow
+pgbouncer_users: []
+
+# Logging. Defaults to syslog so journal / rsyslog handle rotation.
+pgbouncer_log_connections: 1
+pgbouncer_log_disconnections: 1
+pgbouncer_log_pooler_errors: 1
+pgbouncer_syslog: 1
+
+# TLS. v1: off. Placeholders for v2.
+# TODO(v2): wire client_tls_sslmode / client_tls_cert_file / client_tls_key_file
+#           and server_tls_sslmode for upstream PG. Needs a cert distribution
+#           story (likely from os_baseline trust bundle).
+pgbouncer_client_tls_enabled: false
+pgbouncer_server_tls_enabled: false

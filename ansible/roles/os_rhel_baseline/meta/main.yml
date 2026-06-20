@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  author: pgclerk
+  description: Baseline OS tuning (timezone, chrony, sysctl, ulimits, THP, /etc/hosts).
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions:
+    - "8"
+    - "9"
+  - name: Amazon
+    versions:
+    - "2023"
+  galaxy_tags:
+  - baseline
+  - sysctl
+  - chrony
+  - thp
+
+dependencies: []

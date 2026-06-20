@@ -1,0 +1,24 @@
+---
+# manual:    role does nothing on a normal run; updates are applied only
+#            when the consumer includes tasks/run-now.yml from a maintenance
+#            playbook.
+# automatic: installs dnf-automatic and configures it to apply updates on a
+#            timer.
+updates_mode: manual
+
+# Which scope of updates to apply (used by both modes).
+#   security: security advisories only
+#   default:  all available updates
+updates_apply: security
+
+# Reboot after applying updates? Honored by dnf-automatic in `automatic` mode
+# and by run-now.yml in manual mode.
+updates_reboot: false
+
+# Only used in `automatic` mode. Email notification settings for dnf-automatic.
+updates_email_to: ""
+updates_email_from: "root@{{ ansible_facts.fqdn | default(ansible_facts.hostname) }}"
+updates_email_host: localhost
+
+# Only used in `automatic` mode. Systemd timer schedule (OnCalendar=).
+updates_timer_oncalendar: "daily"

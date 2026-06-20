@@ -1,0 +1,24 @@
+---
+postgresql_version: "18"
+postgresql_listen_addresses: "*"
+postgresql_port: 5432
+postgresql_max_connections: 100
+postgresql_shared_buffers: "256MB"
+
+# Dev sample: one app DB + one app user. Real deployments supply these via
+# Semaphore template extra-vars per customer.
+postgresql_databases:
+- name: appdb
+
+postgresql_users:
+- name: appuser
+  password: "{{ appuser_password | default('changeme') }}"
+  db: appdb
+  priv: "ALL"
+
+postgresql_hba_entries:
+- { type: local, database: all, user: postgres, auth_method: peer }
+- { type: local, database: all, user: all, auth_method: peer }
+- { type: host, database: all, user: all, address: "127.0.0.1/32", auth_method: scram-sha-256 }
+- { type: host, database: all, user: all, address: "::1/128", auth_method: scram-sha-256 }
+- { type: host, database: appdb, user: appuser, address: "10.0.0.0/8", auth_method: scram-sha-256 }

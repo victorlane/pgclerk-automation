@@ -1,0 +1,6 @@
+---
+# AL2023 main repo has no node_exporter package. We install the upstream
+# tarball into /opt/node_exporter-<ver>/ and symlink into /usr/local/bin.
+node_exporter_packages: []
+
+node_exporter_package_bin: "{{ node_exporter_bin_path }}"

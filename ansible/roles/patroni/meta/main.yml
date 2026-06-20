@@ -1,0 +1,28 @@
+---
+galaxy_info:
+  role_name: patroni
+  author: Brinkhorst Consulting
+  description: >-
+    Deploys Patroni 3.x to manage a PostgreSQL HA cluster on RHEL family,
+    Amazon Linux 2023, and Debian/Ubuntu. Assumes the `postgresql` role
+    has already installed the PG packages and that an etcd cluster
+    (embedded or external) is reachable.
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions: ["8", "9"]
+  - name: Amazon
+    versions: ["2023"]
+  - name: Debian
+    versions: ["bookworm", "trixie"]
+  - name: Ubuntu
+    versions: ["jammy", "noble"]
+  galaxy_tags:
+  - postgresql
+  - patroni
+  - ha
+  - clustering
+  - replication
+
+dependencies: []

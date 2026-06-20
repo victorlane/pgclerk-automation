@@ -1,0 +1,11 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  listen: konnectivity reload systemd
+
+- name: Restart konnectivity-agent
+  ansible.builtin.service:
+    name: konnectivity-agent
+    state: restarted
+  listen: konnectivity restart

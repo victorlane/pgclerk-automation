@@ -1,0 +1,36 @@
+---
+- name: Assert supported OS
+  ansible.builtin.assert:
+    that:
+    - ansible_facts['os_family'] in ['RedHat', 'Debian']
+      or ansible_facts['distribution'] == 'Amazon'
+    fail_msg: >-
+      The haproxy role supports RedHat, Debian, and Amazon Linux;
+      got distribution='{{ ansible_facts['distribution'] }}',
+      os_family='{{ ansible_facts['os_family'] }}'.
+
+- name: Assert cluster group is populated
+  ansible.builtin.assert:
+    that: groups[haproxy_cluster_group] | default([]) | length > 0
+    fail_msg: >-
+      Inventory group '{{ haproxy_cluster_group }}' is empty -- HAProxy
+      has no backends to balance. Populate the group or override
+      haproxy_cluster_group.
+
+# Mirror the postgresql / pgbouncer role's variant derivation so per-OS
+# install logic stays in install-{family}.yml without when-guards in the
+# common path.
+- name: Determine OS install variant
+  ansible.builtin.set_fact:
+    _pg_os_variant: >-
+      {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+         else ansible_facts['os_family'] }}
+
+- name: Install haproxy
+  ansible.builtin.include_tasks: install.yml
+
+- name: Render haproxy configuration
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Enable and start haproxy service
+  ansible.builtin.include_tasks: service.yml

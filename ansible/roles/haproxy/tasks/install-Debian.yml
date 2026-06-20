@@ -1,0 +1,11 @@
+---
+# Debian main / Ubuntu main ship haproxy directly -- no extra repo needed.
+- name: Refresh apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install haproxy via apt
+  ansible.builtin.apt:
+    name: haproxy
+    state: present

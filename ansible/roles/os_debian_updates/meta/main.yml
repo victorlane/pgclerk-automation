@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  author: pgclerk
+  description: Controlled OS updates -- manual or via unattended-upgrades.
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: Debian
+    versions:
+    - "11"
+    - "12"
+  - name: Ubuntu
+    versions:
+    - "20.04"
+    - "22.04"
+    - "24.04"
+  galaxy_tags:
+  - updates
+  - apt
+  - patching
+
+dependencies: []

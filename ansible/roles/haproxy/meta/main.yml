@@ -1,0 +1,29 @@
+---
+galaxy_info:
+  role_name: haproxy
+  author: pgclerk
+  description: >-
+    Patroni-aware HAProxy floating-port load balancer. Routes the read-write
+    port to whichever cluster member currently reports role=master to
+    Patroni's REST API, with an optional read-only listener routing to any
+    healthy replica. Supports RHEL family, Amazon Linux 2023, and
+    Debian/Ubuntu.
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions: ["8", "9"]
+  - name: Amazon
+    versions: ["2023"]
+  - name: Debian
+    versions: ["bookworm", "trixie"]
+  - name: Ubuntu
+    versions: ["jammy", "noble"]
+  galaxy_tags:
+  - postgresql
+  - patroni
+  - haproxy
+  - loadbalancer
+  - ha
+
+dependencies: []

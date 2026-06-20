@@ -1,0 +1,48 @@
+---
+# EPEL / CRB / PowerTools are RHEL-family concepts. Amazon Linux 2023 ships
+# most of what EPEL provides in its main repo and has no CRB/PowerTools
+# equivalent -- skipping these on AL keeps the role correct and quiet
+# (one branch at the top, no per-task when sprinkling).
+- name: Enable EPEL
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+  when:
+  - packages_enable_epel | bool
+  - ansible_facts.distribution != 'Amazon'
+
+- name: Enable CodeReady Builder (CRB) on EL >= 9
+  ansible.builtin.command: dnf config-manager --enable crb
+  register: _crb_enable
+  changed_when: "'Enabling repo' in _crb_enable.stdout or 'enabled' in _crb_enable.stdout"
+  failed_when:
+  - _crb_enable.rc != 0
+  - "'No matching repo' not in _crb_enable.stderr"
+  when:
+  - packages_enable_crb | bool
+  - ansible_facts.distribution != 'Amazon'
+  - ansible_facts.distribution_major_version | int >= 9
+
+- name: Enable PowerTools on EL 8
+  ansible.builtin.command: dnf config-manager --set-enabled powertools
+  register: _pt_enable
+  changed_when: "'enabled' in _pt_enable.stdout"
+  failed_when:
+  - _pt_enable.rc != 0
+  - "'No matching repo' not in _pt_enable.stderr"
+  when:
+  - packages_enable_crb | bool
+  - ansible_facts.distribution != 'Amazon'
+  - ansible_facts.distribution_major_version | int == 8
+
+- name: Install common packages
+  ansible.builtin.dnf:
+    name: "{{ packages_common }}"
+    state: present
+  when: packages_common | length > 0
+
+- name: Install extra packages
+  ansible.builtin.dnf:
+    name: "{{ packages_extra }}"
+    state: present
+  when: packages_extra | length > 0

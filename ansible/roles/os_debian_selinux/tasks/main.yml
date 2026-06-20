@@ -1,0 +1,7 @@
+---
+# Intentional no-op. AppArmor is the platform LSM on Debian-family hosts;
+# SELinux concepts (fcontext, restorecon, booleans) do not apply. The role
+# exists only so a shared play targeting RHEL and Debian can list `selinux`
+# unconditionally. A dedicated `apparmor` role is on the roadmap.
+- name: SELinux is not applicable on the Debian family -- ending role
+  ansible.builtin.meta: end_role

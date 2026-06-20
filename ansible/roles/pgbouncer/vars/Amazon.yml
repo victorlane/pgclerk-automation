@@ -1,0 +1,7 @@
+---
+# Amazon Linux 2023 ships pgbouncer in the main repo. The package creates
+# user/group 'pgbouncer' and pgbouncer.service runs as that user.
+pgbouncer_package: pgbouncer
+pgbouncer_user: pgbouncer
+pgbouncer_group: pgbouncer
+pgbouncer_config_dir: /etc/pgbouncer

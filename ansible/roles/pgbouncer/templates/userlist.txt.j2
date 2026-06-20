@@ -1,0 +1,10 @@
+;; {{ ansible_managed }}
+;; pgbouncer userlist -- managed by the pgbouncer Ansible role.
+;; One entry per line: "<username>" "<password-or-scram-hash>"
+;;
+;; SCRAM-SHA-256 hashes are extracted from a PG node with:
+;;   SELECT rolname, rolpassword FROM pg_authid WHERE rolname IN (...);
+;; Paste the rolpassword value verbatim into pgbouncer_users[*].password.
+{% for u in pgbouncer_users -%}
+"{{ u.name }}" "{{ u.password }}"
+{% endfor %}

@@ -1,0 +1,9 @@
+---
+# EL8/EL9 ship prometheus-node-exporter via EPEL; PGDG also publishes it as
+# part of the pgdg-common repo, which the postgresql role already configures.
+# Either source is fine -- we don't pin which repo dnf picks. The package
+# drops the binary at /usr/bin/node_exporter.
+node_exporter_packages:
+- prometheus-node-exporter
+
+node_exporter_package_bin: /usr/bin/node_exporter

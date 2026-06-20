@@ -1,0 +1,17 @@
+---
+# Install ufw if it isn't on the host. When false and ufw is absent, the role
+# is a no-op. When true the role installs the package and enables the service.
+firewall_enable_ufw: false
+
+# Default policy applied when ufw is installed/enabled here.
+firewall_ufw_default_incoming: deny
+firewall_ufw_default_outgoing: allow
+firewall_ufw_logging: low
+
+# List of port-based rules. Each item:
+#   { port: 5432, protocol: tcp, sources: ['10.0.0.0/8'] }
+# protocol defaults to tcp, sources defaults to ['any'] (== 0.0.0.0/0 + ::/0).
+firewall_rules: []
+
+# List of named ufw application profiles to allow (e.g. ['OpenSSH']).
+firewall_services: []

@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  role_name: etcd
+  author: pgclerk
+  description: Install and configure an etcd v3 cluster as a DCS for Patroni
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions: [ "8", "9" ]
+  galaxy_tags:
+  - etcd
+  - dcs
+  - patroni
+
+dependencies: []

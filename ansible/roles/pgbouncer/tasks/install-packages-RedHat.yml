@@ -1,0 +1,18 @@
+---
+# Standalone pgbouncer_servers hosts won't have the postgresql role and
+# therefore no PGDG repo. Install the repo RPM unconditionally -- if the
+# postgresql role already laid it down, the action is a no-op.
+- name: Resolve PGDG repo arch
+  ansible.builtin.set_fact:
+    _pgdg_repo_arch: "{{ 'aarch64' if ansible_facts['architecture'] == 'aarch64' else 'x86_64' }}"
+
+- name: Install PGDG RPM repository (idempotent if postgresql role already added it)
+  ansible.builtin.dnf:
+    name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_facts['distribution_major_version'] }}-{{ _pgdg_repo_arch }}/pgdg-redhat-repo-latest.noarch.rpm"
+    state: present
+    disable_gpg_check: true
+
+- name: Install pgbouncer via dnf
+  ansible.builtin.dnf:
+    name: "{{ pgbouncer_package }}"
+    state: present

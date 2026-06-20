@@ -1,0 +1,12 @@
+---
+# haproxy on RHEL 8/9 ships in EPEL, not the base repos. We assume the
+# operator has already enabled EPEL (or CRB on RHEL 9 derivatives) on the
+# target host -- typically via the os_rhel_packages role or an upstream
+# subscription. We do NOT enable EPEL here because EPEL enablement is a
+# customer-policy decision (signing keys, repo mirror, etc.) and the
+# postgresql/pgbackrest roles already share that assumption when they
+# pull packages that live in EPEL on RHEL.
+- name: Install haproxy via dnf
+  ansible.builtin.dnf:
+    name: haproxy
+    state: present

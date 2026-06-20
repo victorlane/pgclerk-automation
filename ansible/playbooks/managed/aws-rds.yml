@@ -1,17 +1,41 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         managed-aws-rds
-# title:       AWS RDS · provision
-# category:    managed
-# surface:     aws
-# destructive: False
-
-- name: "AWS RDS · provision"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+# Managed PG on AWS via RDS / Aurora. The operator drives shape via
+# extra-vars from the cluster wizard:
+#   db_engine: postgres | aurora-postgresql
+#   db_instance_class, db_allocated_storage, db_engine_version, db_master_username
+#   db_master_password (vaulted; comes from cloud_credentials.fields.master_password)
+#   db_vpc_security_group_ids: [ ... ]
+#   db_subnet_group: <name>
+#   db_proxy_secret_arn: <arn> (optional; UI passes when present)
+# This runs on `localhost` because AWS API calls don't target a managed host.
+- name: Provision RDS/Aurora cluster
+  hosts: localhost
   gather_facts: false
+  vars:
+    db_engine: "{{ db_engine | default('postgres') }}"
+    db_instance_class: "{{ db_instance_class | default('db.t3.medium') }}"
+    db_allocated_storage: "{{ db_allocated_storage | default(20) }}"
+    db_engine_version: "{{ db_engine_version | default('17') }}"
   tasks:
-    - name: Announce stub dispatch
+    - name: Create RDS instance
+      amazon.aws.rds_instance:
+        id: "{{ db_identifier }}"
+        engine: "{{ db_engine }}"
+        engine_version: "{{ db_engine_version }}"
+        instance_class: "{{ db_instance_class }}"
+        allocated_storage: "{{ db_allocated_storage }}"
+        master_username: "{{ db_master_username }}"
+        master_user_password: "{{ db_master_password }}"
+        vpc_security_group_ids: "{{ db_vpc_security_group_ids | default([]) }}"
+        db_subnet_group_name: "{{ db_subnet_group | default(omit) }}"
+        publicly_accessible: false
+        state: present
+        wait: true
+      register: rds_out
+
+    - name: Attach RDS Proxy secret (if provided)
+      when: db_proxy_secret_arn is defined and db_proxy_secret_arn | length > 0
       ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'managed-aws-rds'"
-          - "Replace ansible/playbooks/managed/aws-rds.yml with the real playbook."
+        msg: >-
+          db_proxy_secret_arn={{ db_proxy_secret_arn }} —
+          attach via rds_proxy module (out of scope for v0; UI captures the ARN now).

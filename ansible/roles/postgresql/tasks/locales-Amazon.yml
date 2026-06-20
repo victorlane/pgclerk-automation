@@ -1,0 +1,4 @@
+---
+# AL2023 also uses glibc-langpack-<lang>; the RedHat body works verbatim.
+- name: Install locales via glibc-langpack-<lang>
+  ansible.builtin.include_tasks: locales-RedHat.yml

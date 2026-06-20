@@ -1,0 +1,22 @@
+---
+# EL8/EL9: prometheus-node-exporter via EPEL or pgdg-common. The package
+# creates the node_exporter system user and the binary at
+# /usr/bin/node_exporter. We override the systemd unit so the listen
+# address and textfile collector come from this role.
+- name: Install node_exporter package
+  ansible.builtin.dnf:
+    name: "{{ node_exporter_packages }}"
+    state: present
+  when: not node_exporter_install_from_tarball
+
+- name: Disable the package's shipped systemd unit
+  when: not node_exporter_install_from_tarball
+  ansible.builtin.service:
+    name: prometheus-node-exporter
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Install from upstream tarball
+  ansible.builtin.include_tasks: install-tarball.yml
+  when: node_exporter_install_from_tarball

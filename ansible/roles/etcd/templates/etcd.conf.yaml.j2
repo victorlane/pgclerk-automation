@@ -1,0 +1,40 @@
+---
+# {{ ansible_managed }}
+# etcd v3 configuration. See https://etcd.io/docs/v3.5/op-guide/configuration/.
+#
+# Ports are stable across the plaintext / TLS branch (2379 client, 2380 peer);
+# only the URL scheme switches between http:// and https://.
+
+{% set _scheme = 'https' if etcd_enable_tls | bool else 'http' %}
+name: "etcd-{{ inventory_hostname }}"
+data-dir: "{{ etcd_data_dir }}"
+
+listen-peer-urls: "{{ _scheme }}://{{ etcd_listen_ip }}:{{ etcd_peer_port }}"
+listen-client-urls: "{{ _scheme }}://{{ etcd_listen_ip }}:{{ etcd_client_port }},{{ _scheme }}://127.0.0.1:{{ etcd_client_port }}"
+
+initial-advertise-peer-urls: "{{ _scheme }}://{{ etcd_advertise_ip }}:{{ etcd_peer_port }}"
+advertise-client-urls: "{{ _scheme }}://{{ etcd_advertise_ip }}:{{ etcd_client_port }}"
+
+initial-cluster-token: "{{ etcd_cluster_token }}"
+initial-cluster-state: "{{ etcd_initial_cluster_state }}"
+initial-cluster: "{% for h in groups[etcd_inventory_group] %}etcd-{{ h }}={{ _scheme }}://{{ hostvars[h].etcd_advertise_ip }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
+
+enable-v2: false
+auto-compaction-mode: periodic
+auto-compaction-retention: "1h"
+
+{% if etcd_enable_tls | bool %}
+client-transport-security:
+  cert-file: "{{ etcd_tls_cert_dir }}/server.crt"
+  key-file: "{{ etcd_tls_cert_dir }}/server.key"
+  client-cert-auth: true
+  trusted-ca-file: "{{ etcd_tls_cert_dir }}/ca.crt"
+  auto-tls: false
+
+peer-transport-security:
+  cert-file: "{{ etcd_tls_cert_dir }}/peer.crt"
+  key-file: "{{ etcd_tls_cert_dir }}/peer.key"
+  client-cert-auth: true
+  trusted-ca-file: "{{ etcd_tls_cert_dir }}/ca.crt"
+  auto-tls: false
+{% endif %}

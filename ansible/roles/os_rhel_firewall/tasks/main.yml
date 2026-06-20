@@ -1,0 +1,55 @@
+---
+- name: Detect firewalld
+  ansible.builtin.systemd:
+    name: firewalld
+  register: firewall_unit
+  failed_when: false
+  changed_when: false
+
+# Wrap everything in a block guarded by firewalld actually being active so a
+# host without firewalld silently no-ops this role without aborting downstream
+# roles (the previous `meta: end_host` cut the entire play on that host).
+- name: Configure firewalld rules
+  when:
+  - firewall_unit.status is defined
+  - firewall_unit.status.ActiveState | default('') == 'active'
+  block:
+  - name: Open named firewalld services
+    ansible.posix.firewalld:
+      service: "{{ item }}"
+      zone: "{{ firewall_default_zone }}"
+      permanent: true
+      immediate: true
+      state: enabled
+    loop: "{{ firewall_services }}"
+
+  - name: Open port rules without source restriction
+    ansible.posix.firewalld:
+      port: "{{ item.port }}/{{ item.protocol | default('tcp') }}"
+      zone: "{{ item.zone | default(firewall_default_zone) }}"
+      permanent: true
+      immediate: true
+      state: enabled
+    loop: "{{ firewall_rules }}"
+    loop_control:
+      label: "{{ item.port }}/{{ item.protocol | default('tcp') }} (any source)"
+    when: (item.sources | default(['0.0.0.0/0'])) == ['0.0.0.0/0']
+
+  - name: Open port rules with source CIDR restriction
+    ansible.posix.firewalld:
+      rich_rule: >-
+        rule family={{ 'ipv6' if ':' in source else 'ipv4' }}
+        source address={{ source }}
+        port port={{ item.port }} protocol={{ item.protocol | default('tcp') }} accept
+      zone: "{{ item.zone | default(firewall_default_zone) }}"
+      permanent: true
+      immediate: true
+      state: enabled
+    loop: "{{ firewall_rules | subelements('sources', skip_missing=True) }}"
+    loop_control:
+      loop_var: pair
+      label: "{{ pair.0.port }}/{{ pair.0.protocol | default('tcp') }} from {{ pair.1 }}"
+    vars:
+      item: "{{ pair.0 }}"
+      source: "{{ pair.1 }}"
+    when: (item.sources | default(['0.0.0.0/0'])) != ['0.0.0.0/0']

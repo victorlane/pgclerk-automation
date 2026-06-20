@@ -1,0 +1,11 @@
+---
+# PGDG ships prometheus-postgres-exporter for EL8/EL9. The package drops
+# the binary at /usr/bin/postgres_exporter and a systemd unit at
+# /usr/lib/systemd/system/postgres_exporter.service, but we override the
+# unit with our own to point at our env file and SQL role.
+postgres_exporter_packages:
+- prometheus-postgres-exporter
+
+# When the distro package is installed it sets /usr/bin/postgres_exporter.
+# When installing from tarball we want a stable path in /usr/local/bin.
+postgres_exporter_package_bin: /usr/bin/postgres_exporter

@@ -1,17 +1,92 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         reindex
-# title:       PostgreSQL · reindex
-# category:    maintenance
-# surface:     postgres
-# destructive: False
+# Run REINDEX against a database, schema, table, or single index. Uses
+# CONCURRENTLY when supported (PG 12+ for table/index/schema; never for
+# DATABASE -- REINDEX DATABASE CONCURRENTLY is not implemented in PostgreSQL).
+#
+# Required vars:
+#   db_name              - database to reindex (the SQL connection target).
+#
+# Optional vars:
+#   reindex_target       - DATABASE | SCHEMA | TABLE | INDEX (default: DATABASE).
+#   reindex_target_name  - name of the schema/table/index. Required when
+#                          reindex_target != DATABASE. For TABLE/INDEX, accepts
+#                          schema-qualified names.
+#   reindex_concurrently - add CONCURRENTLY (default: true). Must be false
+#                          when reindex_target=DATABASE.
+#
+# Idempotent: re-running rebuilds indexes again, which is a no-op in terms of
+# correctness but does work. Use sparingly.
+#
+# Example:
+#
+#   ansible-playbook playbooks/maintenance/reindex.yml \
+#     -e db_name=billing -e reindex_target=TABLE \
+#     -e reindex_target_name=public.invoices \
+#     --limit customer_acme
 
-- name: "PostgreSQL · reindex"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+- name: REINDEX
+  hosts: "{{ groups['postgres_primary'] | default([]) | first | default(groups['postgres_servers'] | first) }}"
+  become: true
   gather_facts: false
+  vars:
+    reindex_target: DATABASE
+    reindex_concurrently: true
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'reindex'"
-          - "Replace ansible/playbooks/maintenance/reindex.yml with the real playbook."
+  - name: Refuse to run without an explicit --limit
+    ansible.builtin.assert:
+      that: ansible_limit is defined
+      fail_msg: >-
+        Refusing to run reindex against the entire inventory. Re-run with
+        --limit <customer_group_or_host>.
+
+  - name: Assert inputs are coherent
+    ansible.builtin.assert:
+      that:
+      - db_name is defined
+      - db_name | length > 0
+      - reindex_target | upper in ['DATABASE', 'SCHEMA', 'TABLE', 'INDEX']
+      - (reindex_target | upper == 'DATABASE') or (reindex_target_name is defined and reindex_target_name | length > 0)
+      - not ((reindex_target | upper == 'DATABASE') and (reindex_concurrently | bool))
+      fail_msg: >-
+        Required: db_name and reindex_target in (DATABASE|SCHEMA|TABLE|INDEX).
+        reindex_target_name is required for non-DATABASE targets.
+        REINDEX DATABASE CONCURRENTLY is not supported by PostgreSQL --
+        set reindex_concurrently=false to reindex an entire database.
+
+  - name: Compose REINDEX statement
+    ansible.builtin.set_fact:
+      _reindex_sql: >-
+        REINDEX
+        {{ 'TABLE' if (reindex_target | upper) == 'TABLE' else
+           'INDEX' if (reindex_target | upper) == 'INDEX' else
+           'SCHEMA' if (reindex_target | upper) == 'SCHEMA' else
+           'DATABASE' }}
+        {{ 'CONCURRENTLY' if reindex_concurrently | bool else '' }}
+        {{ (reindex_target_name if (reindex_target | upper) != 'DATABASE' else db_name) }}
+
+  - name: Record start time
+    ansible.builtin.set_fact:
+      _reindex_start: "{{ lookup('pipe', 'date -u +%FT%TZ') }}"
+
+  - name: Execute REINDEX
+    become_user: postgres
+    community.postgresql.postgresql_query:
+      db: "{{ db_name }}"
+      autocommit: true
+      query: "{{ _reindex_sql }}"
+    register: _reindex_result
+
+  - name: Record end time
+    ansible.builtin.set_fact:
+      _reindex_end: "{{ lookup('pipe', 'date -u +%FT%TZ') }}"
+
+  - name: Report REINDEX outcome
+    ansible.builtin.debug:
+      msg:
+      - "Database:        {{ db_name }}"
+      - "Target:          {{ reindex_target | upper }}"
+      - "Target name:     {{ reindex_target_name | default(db_name) }}"
+      - "Concurrently:    {{ reindex_concurrently | bool }}"
+      - "Statement:       {{ _reindex_sql | trim }}"
+      - "Started:         {{ _reindex_start }}"
+      - "Ended:           {{ _reindex_end }}"

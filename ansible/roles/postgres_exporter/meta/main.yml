@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  role_name: postgres_exporter
+  author: pgclerk
+  description: Install and configure prometheus-postgres-exporter on RHEL, Debian, and Amazon Linux
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions: [ "8", "9" ]
+  - name: Amazon
+    versions: [ "2023" ]
+  - name: Debian
+    versions: [ "bookworm", "trixie" ]
+  - name: Ubuntu
+    versions: [ "jammy", "noble" ]
+  galaxy_tags:
+  - monitoring
+  - prometheus
+  - postgresql
+
+dependencies: []

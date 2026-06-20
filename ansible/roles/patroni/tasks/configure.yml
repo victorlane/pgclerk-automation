@@ -1,0 +1,23 @@
+---
+# 0640 + postgres:postgres because patroni.yml contains the superuser,
+# replicator, and rewind passwords in cleartext. Anything looser would leak
+# them to every local account.
+- name: Render /etc/patroni/patroni.yml
+  ansible.builtin.template:
+    src: patroni.yml.j2
+    dest: /etc/patroni/patroni.yml
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: Restart patroni
+
+- name: Render patroni.service systemd unit
+  ansible.builtin.template:
+    src: patroni.service.j2
+    dest: /etc/systemd/system/patroni.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+  - Reload systemd
+  - Restart patroni

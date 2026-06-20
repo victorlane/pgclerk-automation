@@ -1,0 +1,197 @@
+---
+# Initialize the autotune fact slot to empty.  When postgresql_autotune is
+# true (typically because --tags autotune was passed, or the dedicated
+# autotune.yml playbook fired), the tagged include below replaces these
+# with computed values.  When autotune isn't running, the empty fallback
+# means the template omits the line and PG uses its own default.
+- name: Initialise empty autotune slots
+  ansible.builtin.set_fact:
+    _pgtuned_shared_buffers_mb: ""
+    _pgtuned_effective_cache_mb: ""
+    _pgtuned_maint_work_mb: ""
+    _pgtuned_work_mem_mb: ""
+    _pgtuned_wal_buffers_mb: ""
+    _pgtuned_min_wal_size_mb: ""
+    _pgtuned_max_wal_size_mb: ""
+    _pgtuned_checkpoint_completion_target: ""
+    _pgtuned_random_page_cost: ""
+    _pgtuned_effective_io_concurrency: ""
+    _pgtuned_default_statistics_target: ""
+    _pgtuned_max_worker_processes: ""
+    _pgtuned_max_parallel_workers: ""
+    _pgtuned_max_parallel_workers_per_gather: ""
+    _pgtuned_max_parallel_maintenance_workers: ""
+
+# IMPERATIVE-ONLY.  `tags: [never, autotune]` means this include is skipped
+# unless the operator passes --tags autotune.  postgresql_autotune is the
+# *intent* var (also flipped by autotune.yml maintenance playbook) so role
+# consumers can wire it explicitly without touching tags.
+- name: Auto-tune from host facts (imperative only)
+  ansible.builtin.include_tasks: autotune.yml
+  when: postgresql_autotune | bool
+  tags:
+  - never
+  - autotune
+
+# Resolve final values.  Precedence: explicit postgresql_<knob> > autotune
+# value > empty (PG default).
+- name: Resolve final tuning values
+  ansible.builtin.set_fact:
+    _pg_shared_buffers: "{{ postgresql_shared_buffers | default(_pgtuned_shared_buffers_mb ~ 'MB' if _pgtuned_shared_buffers_mb else '', true) }}"
+    _pg_effective_cache: "{{ postgresql_effective_cache_size | default(_pgtuned_effective_cache_mb ~ 'MB' if _pgtuned_effective_cache_mb else '', true) }}"
+    _pg_maint_work_mem: "{{ postgresql_maintenance_work_mem | default(_pgtuned_maint_work_mb ~ 'MB' if _pgtuned_maint_work_mb else '', true) }}"
+    _pg_work_mem: "{{ postgresql_work_mem | default(_pgtuned_work_mem_mb ~ 'MB' if _pgtuned_work_mem_mb else '', true) }}"
+    _pg_wal_buffers: "{{ postgresql_wal_buffers | default(_pgtuned_wal_buffers_mb ~ 'MB' if _pgtuned_wal_buffers_mb else '', true) }}"
+    _pg_min_wal_size: "{{ postgresql_min_wal_size | default(_pgtuned_min_wal_size_mb ~ 'MB' if _pgtuned_min_wal_size_mb else '', true) }}"
+    _pg_max_wal_size: "{{ postgresql_max_wal_size | default(_pgtuned_max_wal_size_mb ~ 'MB' if _pgtuned_max_wal_size_mb else '', true) }}"
+    _pg_checkpoint_completion_target: "{{ postgresql_checkpoint_completion_target | default(_pgtuned_checkpoint_completion_target, true) }}"
+    _pg_random_page_cost: "{{ postgresql_random_page_cost | default(_pgtuned_random_page_cost, true) }}"
+    _pg_effective_io_concurrency: "{{ postgresql_effective_io_concurrency | default(_pgtuned_effective_io_concurrency, true) }}"
+    _pg_default_statistics_target: "{{ postgresql_default_statistics_target | default(_pgtuned_default_statistics_target, true) }}"
+    _pg_max_worker_processes: "{{ postgresql_max_worker_processes | default(_pgtuned_max_worker_processes, true) }}"
+    _pg_max_parallel_workers: "{{ postgresql_max_parallel_workers | default(_pgtuned_max_parallel_workers, true) }}"
+    _pg_max_parallel_workers_per_gather: "{{ postgresql_max_parallel_workers_per_gather | default(_pgtuned_max_parallel_workers_per_gather, true) }}"
+    _pg_max_parallel_maintenance_workers: "{{ postgresql_max_parallel_maintenance_workers | default(_pgtuned_max_parallel_maintenance_workers, true) }}"
+
+# Snapshot the existing postgresql.conf so the template task can be told
+# whether changing it touched restart-required keys.  We diff after rendering.
+- name: Read existing postgresql.conf (for restart-vs-reload detection)
+  ansible.builtin.slurp:
+    src: "{{ postgresql_conf_path }}"
+  register: _pg_conf_before
+  failed_when: false
+  changed_when: false
+
+- name: Deploy postgresql.conf
+  ansible.builtin.template:
+    src: postgresql.conf.j2
+    dest: "{{ postgresql_conf_path }}"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  register: _pg_conf_apply
+
+# Walk the rendered config + previous content, extract every "key = value"
+# pair from each, and diff.  Then split changed keys into
+# restart-required (PG context=postmaster) and reload-only.
+- name: Identify config keys that changed
+  ansible.builtin.set_fact:
+    _pg_conf_changed_keys: >-
+      {{ (
+           (_pg_conf_apply.diff | default([{}])
+              | first
+              | default({}, true)
+            ).get('after', '')
+           | regex_findall('^([a-z_]+)\\s*=', multiline=true)
+         )
+         | difference(
+           (_pg_conf_apply.diff | default([{}])
+              | first
+              | default({}, true)
+            ).get('before', '')
+           | regex_findall('^([a-z_]+)\\s*=', multiline=true)
+         ) }}
+  when: _pg_conf_apply is changed
+
+# PG context=postmaster keys.  Hand-maintained list of the most common
+# settings the role can render that need a full restart.  When in doubt the
+# operator can always restart -- false-negatives in this list mean a value
+# silently doesn't apply until next restart, which we want to avoid.
+- name: Set restart-required key catalogue
+  ansible.builtin.set_fact:
+    _pg_restart_required_keys:
+    - shared_buffers
+    - max_connections
+    - max_worker_processes
+    - listen_addresses
+    - port
+    - wal_level
+    - max_wal_senders
+    - max_replication_slots
+    - max_prepared_transactions
+    - wal_buffers
+    - shared_preload_libraries
+    - huge_pages
+    - data_directory
+    - hba_file
+    - ident_file
+    - logging_collector
+
+- name: Compute whether restart is required vs reload-only
+  ansible.builtin.set_fact:
+    postgresql_restart_required: "{{ ((_pg_conf_changed_keys | default([])) | intersect(_pg_restart_required_keys)) | length > 0 }}"
+    _pg_reload_required: "{{ (_pg_conf_changed_keys | default([])) | length > 0 }}"
+    _pg_keys_needing_restart: "{{ (_pg_conf_changed_keys | default([])) | intersect(_pg_restart_required_keys) }}"
+    _pg_keys_reload_only: "{{ (_pg_conf_changed_keys | default([])) | difference(_pg_restart_required_keys) }}"
+
+# Is the cluster running? On first install configure.yml renders the conf
+# BEFORE the service starts, so we can't issue SQL.  When PG isn't running
+# yet, the renamed conf file is enough -- the upcoming start step will
+# pick it up.  When PG is running, prefer a reload over a restart.
+- name: Detect whether PostgreSQL is already running
+  ansible.builtin.systemd:
+    name: "{{ postgresql_service }}"
+  register: _pg_unit_state
+  changed_when: false
+  failed_when: false
+
+- name: Set _pg_running fact
+  ansible.builtin.set_fact:
+    _pg_running: "{{ (_pg_unit_state.status.ActiveState | default('inactive')) == 'active' }}"
+
+# Issue pg_reload_conf() ourselves when only reload-able keys changed AND
+# the cluster is already running.  Don't bounce PG -- a reload is enough
+# and operators don't expect a restart on a normal site.yml run.
+- name: Reload PostgreSQL config (only when reload-only keys changed)
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: postgres
+    query: "SELECT pg_reload_conf()"
+  when:
+  - _pg_reload_required | bool
+  - not (postgresql_restart_required | bool)
+  - _pg_running | bool
+  changed_when: true
+
+- name: Surface restart-required notice to the DBA
+  ansible.builtin.debug:
+    msg:
+    - "############################################################"
+    - "POSTGRES RESTART REQUIRED on {{ inventory_hostname }}"
+    - "The following changed config keys take effect only after a"
+    - "full restart of postgresql:"
+    - "  {{ _pg_keys_needing_restart | join(', ') }}"
+    - ""
+    - "The role did NOT restart automatically -- you decide when."
+    - "When ready, run:"
+    - "  ansible -i <inventory> {{ inventory_hostname }} -m systemd -a"
+    - "    'name={{ postgresql_service }} state=restarted' --become"
+    - "Or schedule a restart through your usual maintenance window."
+    - "############################################################"
+  when:
+  - postgresql_restart_required | bool
+
+- name: Deploy pg_hba.conf
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "{{ postgresql_hba_path }}"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  register: _pg_hba_apply
+
+# pg_hba is always reload-only (PG re-reads it on SIGHUP).  Same running-
+# cluster guard as the postgresql.conf reload above: on first install the
+# upcoming start step picks up the new pg_hba.conf, so a reload now would
+# fail against a non-running cluster.
+- name: Reload PostgreSQL after pg_hba.conf change
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: postgres
+    query: "SELECT pg_reload_conf()"
+  when:
+  - _pg_hba_apply is changed
+  - _pg_running | bool
+  changed_when: true

@@ -1,0 +1,17 @@
+---
+# pgbouncer supports RELOAD over the admin console, but a full service
+# reload via systemd is simpler and works for every config change we make
+# (ini + userlist + drop-in). Restart is reserved for systemd unit changes.
+- name: Reload pgbouncer
+  ansible.builtin.service:
+    name: pgbouncer
+    state: reloaded
+
+- name: Restart pgbouncer
+  ansible.builtin.service:
+    name: pgbouncer
+    state: restarted
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true

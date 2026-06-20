@@ -1,0 +1,72 @@
+---
+- name: Assert supported OS
+  ansible.builtin.assert:
+    that:
+    - ansible_facts['os_family'] in ['RedHat', 'Debian']
+      or ansible_facts['distribution'] == 'Amazon'
+    fail_msg: >-
+      The patroni role supports RedHat, Debian, and Amazon Linux;
+      got distribution='{{ ansible_facts['distribution'] }}',
+      os_family='{{ ansible_facts['os_family'] }}'.
+
+- name: Assert HA mode is patroni
+  ansible.builtin.assert:
+    that: postgresql_ha_mode == 'patroni'
+    fail_msg: >-
+      The patroni role requires postgresql_ha_mode == 'patroni';
+      got '{{ postgresql_ha_mode | default('undefined') }}'.
+
+- name: Assert DCS inventory group is populated
+  ansible.builtin.assert:
+    that: groups[patroni_dcs_inventory_group] | default([]) | length > 0
+    fail_msg: >-
+      Inventory group '{{ patroni_dcs_inventory_group }}' is empty -- Patroni
+      has no etcd endpoints to talk to. Populate the group or override
+      patroni_dcs_inventory_group.
+
+# Mirror the postgresql role's variant derivation so package install,
+# binary path, service name, etc. land per-family without when-guards.
+- name: Determine OS install variant
+  ansible.builtin.set_fact:
+    _pg_os_variant: >-
+      {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+         else ansible_facts['os_family'] }}
+
+# Reuse the postgresql role's per-variant vars (postgresql_data_dir,
+# postgresql_bin_path, postgresql_service, ...) so consumers don't redefine
+# them across both roles. role_path is the patroni role.
+- name: Load postgresql OS-specific variables
+  ansible.builtin.include_vars: "{{ role_path }}/../postgresql/vars/{{ _pg_os_variant }}.yml"
+
+# INJECT_FACTS_AS_VARS is off in newer ansible-core; reference facts via
+# the ansible_facts dict explicitly.
+- name: Compute memory-derived PostgreSQL parameters
+  ansible.builtin.set_fact:
+    _pg_shared_buffers: "{{ (ansible_facts['memtotal_mb'] / 4) | int }}MB"
+    _pg_effective_cache: "{{ (ansible_facts['memtotal_mb'] * 3 / 4) | int }}MB"
+    _pg_maint_work_mem: "{{ [[((ansible_facts['memtotal_mb'] / 20) | int), 1024] | min, 1] | max }}MB"
+    _pg_work_mem: "{{ '16MB' if ansible_facts['memtotal_mb'] >= 8000 else '4MB' }}"
+
+- name: Install Patroni and dependencies
+  ansible.builtin.include_tasks: install.yml
+
+# Translate the opinionated patroni_data_loss_budget preset into the
+# sync-mode + max-lag knobs. Must run before configure.yml so the
+# template picks up the budget-driven values rather than the role
+# defaults.
+- name: Apply data-loss budget preset
+  ansible.builtin.include_tasks: data-loss-budget.yml
+
+- name: Render Patroni configuration and systemd unit
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Mask PGDG unit and start patroni.service
+  ansible.builtin.include_tasks: service.yml
+
+# `wait-for-cluster.yml` is exposed as a separate include_tasks entry point.
+# The role itself doesn't call it because waiting for full cluster
+# membership only makes sense AFTER both the leader play and the replica
+# play have run -- if the role waited on the leader before replicas
+# started, the leader play would block forever and replicas would never
+# get their patroni installed.  Composition playbooks (playbooks/ha.yml,
+# playbooks/full.yml) call it as a fourth stage post-bootstrap.

@@ -1,17 +1,90 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         managed-azure-flexible-server
-# title:       Azure Flexible Server · provision
-# category:    managed
-# surface:     azure
-# destructive: False
-
-- name: "Azure Flexible Server · provision"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+# Managed PG on Azure via Postgres Flexible Server. The operator drives shape
+# via extra-vars from the cluster wizard:
+#   subscription_id, resource_group, location
+#   server_name, db_name (optional initial db)
+#   administrator_login, administrator_password (vaulted; from cloud_credentials)
+#   sku_name                          # e.g. Standard_B2ms, Standard_D4ds_v5, Standard_E4ds_v5
+#   storage_mb                        # >= 32768
+#   version                           # PG major: 16, 15, 14, 13
+#   high_availability_mode            # Disabled | SameZone | ZoneRedundant
+#   backup_retention_days             # 7..35
+#   geo_redundant_backup_enabled      # bool
+#   maintenance_window:               # { day_of_week, start_hour, start_minute }
+#   public_network_access_enabled     # bool
+#   firewall_rules: [ { name, start_ip, end_ip } ]
+#   key_vault_key_id                  # optional CMK; null = service-managed key
+# Runs on `localhost` because Azure API calls don't target a managed host.
+- name: Provision Azure Postgres Flexible Server
+  hosts: localhost
   gather_facts: false
+  vars:
+    sku_name: "{{ sku_name | default('Standard_D2ds_v5') }}"
+    storage_mb: "{{ storage_mb | default(131072) }}"
+    version: "{{ version | default('16') }}"
+    high_availability_mode: "{{ high_availability_mode | default('ZoneRedundant') }}"
+    backup_retention_days: "{{ backup_retention_days | default(14) }}"
+    geo_redundant_backup_enabled: "{{ geo_redundant_backup_enabled | default(false) }}"
+    public_network_access_enabled: "{{ public_network_access_enabled | default(false) }}"
+    firewall_rules: "{{ firewall_rules | default([]) }}"
+    maintenance_window: "{{ maintenance_window | default({'day_of_week': 0, 'start_hour': 4, 'start_minute': 0}) }}"
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'managed-azure-flexible-server'"
-          - "Replace ansible/playbooks/managed/azure-flexible-server.yml with the real playbook."
+    # Single create. The azure.azcollection module wraps the Microsoft.DBforPostgreSQL
+    # flexible-servers ARM API. SKU tier is encoded in the prefix:
+    #   Standard_B*      -> Burstable
+    #   Standard_D*ds_v* -> GeneralPurpose
+    #   Standard_E*ds_v* -> MemoryOptimized
+    # The wizard derives sku_name from the tier + size pick; we pass it through verbatim.
+    - name: Create Postgres Flexible Server
+      azure.azcollection.azure_rm_postgresqlflexibleserver:
+        subscription_id: "{{ subscription_id }}"
+        resource_group: "{{ resource_group }}"
+        name: "{{ server_name }}"
+        location: "{{ location }}"
+        sku:
+          name: "{{ sku_name }}"
+        storage:
+          storage_size_gb: "{{ (storage_mb | int) // 1024 }}"
+        version: "{{ version }}"
+        administrator_login: "{{ administrator_login }}"
+        administrator_login_password: "{{ administrator_password }}"
+        high_availability:
+          mode: "{{ high_availability_mode }}"
+        backup:
+          backup_retention_days: "{{ backup_retention_days }}"
+          geo_redundant_backup: "{{ 'Enabled' if geo_redundant_backup_enabled else 'Disabled' }}"
+        maintenance_window:
+          custom_window: Enabled
+          day_of_week: "{{ maintenance_window.day_of_week }}"
+          start_hour: "{{ maintenance_window.start_hour }}"
+          start_minute: "{{ maintenance_window.start_minute | default(0) }}"
+        network:
+          public_network_access: "{{ 'Enabled' if public_network_access_enabled else 'Disabled' }}"
+        # CMK is encoded as a data_encryption block; only sent when caller set a key id.
+        data_encryption: "{{ {'type': 'AzureKeyVault', 'primary_key_uri': key_vault_key_id} if (key_vault_key_id | default('')) | length > 0 else omit }}"
+        state: present
+      register: flexible_server
+
+    # Firewall rules only make sense on the public endpoint. Skipped when access is private.
+    - name: Apply firewall rules
+      azure.azcollection.azure_rm_postgresqlflexibleserver_firewallrule:
+        subscription_id: "{{ subscription_id }}"
+        resource_group: "{{ resource_group }}"
+        server_name: "{{ server_name }}"
+        name: "{{ item.name }}"
+        start_ip_address: "{{ item.start_ip }}"
+        end_ip_address: "{{ item.end_ip }}"
+        state: present
+      loop: "{{ firewall_rules }}"
+      when: public_network_access_enabled and (firewall_rules | length > 0)
+
+    # Optional initial database. Most operators leave this off and use the
+    # add-database playbook to create per-customer DBs after provisioning.
+    - name: Create initial database
+      azure.azcollection.azure_rm_postgresqlflexibledatabase:
+        subscription_id: "{{ subscription_id }}"
+        resource_group: "{{ resource_group }}"
+        server_name: "{{ server_name }}"
+        name: "{{ db_name }}"
+        state: present
+      when: db_name is defined and db_name | length > 0

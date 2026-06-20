@@ -1,0 +1,57 @@
+---
+# Expected member count = everything in postgres_primary + postgres_replicas
+# that the play is currently iterating over. Computed once so the retry loop
+# below stays cheap.
+- name: Compute expected Patroni member count
+  ansible.builtin.set_fact:
+    _patroni_expected_members: >-
+      {{
+        ((groups['postgres_primary'] | default([])) +
+         (groups['postgres_replicas'] | default([])))
+        | unique | length
+      }}
+
+# patronictl exits 0 even mid-bootstrap, so we count rows in its JSON
+# output rather than relying on rc.  The retry/until loop is the actual
+# gate.
+#
+# WHY THIS IS HAIRIER THAN IT LOOKS: an earlier version had
+# `failed_when: false` plus an `until` that called `from_json` on stdout.
+# When patronictl crashed with a ModuleNotFoundError (psycopg2 missing
+# from the venv), stdout was empty + stderr had the traceback.  Empty
+# string can't be JSON-parsed, so the `until` condition silently
+# evaluated to "not yet" for the full retry budget (5+ minutes) -- then
+# the task succeeded thanks to `failed_when: false` and the NEXT task
+# crashed with a Python ImportError nobody could trace.
+#
+# Now: drop `failed_when: false`, but use a wrapped shell that emits
+# `[]` on any patronictl crash so the JSON path stays safe.  An exhaust
+# of the retry budget surfaces the real error from the LAST attempt's
+# stderr via the failed-task message.
+- name: Wait until all Patroni members are visible in the cluster
+  ansible.builtin.shell:
+    cmd: |
+      out="$(/usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json 2>/tmp/patronictl.err)" || {
+        echo "patronictl failed:" >&2
+        cat /tmp/patronictl.err >&2
+        echo "[]"
+        exit 1
+      }
+      printf '%s\n' "$out"
+  register: _patronictl_list
+  changed_when: false
+  retries: "{{ patroni_wait_for_cluster_retries }}"
+  delay: "{{ patroni_wait_for_cluster_delay }}"
+  until:
+  - _patronictl_list.rc == 0
+  - (_patronictl_list.stdout | from_json | length) | int >= (_patroni_expected_members | int)
+
+- name: Show final cluster state
+  ansible.builtin.command:
+    cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
+  register: _patronictl_final
+  changed_when: false
+
+- name: Display Patroni cluster topology
+  ansible.builtin.debug:
+    var: _patronictl_final.stdout_lines

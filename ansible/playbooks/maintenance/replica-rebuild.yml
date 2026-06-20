@@ -1,17 +1,266 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         replica-rebuild
-# title:       PostgreSQL · replica rebuild
-# category:    maintenance
-# surface:     postgres
-# destructive: True
+# Rebuild a single Patroni replica from the current leader.
+#
+# The fast path is `patronictl reinit <scope> <member>`, which tells the
+# replica to clear its data dir and re-clone from the leader using
+# pgBackRest (when configured) or pg_basebackup.  The slow path is to skip
+# patronictl entirely and run a clean-room pg_basebackup on the replica
+# host; useful when the data dir is so far out of sync that reinit stalls,
+# or when patronictl is unhappy for any other reason.
+#
+# Usage:
+#   ansible-playbook playbooks/maintenance/replica-rebuild.yml \
+#     --limit <replica_host> \
+#     -e replica_host=<replica_host>
+#
+# Required vars:
+#   replica_host : the inventory hostname of the replica to rebuild.
+#                  Must also be passed via --limit so the play binds to a
+#                  single host.
+#
+# Optional vars:
+#   replica_force_pg_basebackup : when true, skip `patronictl reinit` and
+#                                  go straight to a clean-room pg_basebackup
+#                                  from the leader.  Default: false.
+#   replica_rebuild_timeout_s   : seconds to wait for the replica to reach
+#                                  state=streaming after the rebuild.  Default:
+#                                  1800 (30 min).  Bump for large clusters.
+#
+# Refusals:
+#   - replica_host not in postgres_replicas (or postgres_servers).
+#   - postgresql_ha_mode != patroni  (HA-specific operation).
+#   - replica_host is currently the Patroni leader.
+#
+# Fall-back path (manual, when this playbook fails):
+#   1. SSH to the replica.  systemctl stop patroni
+#   2. As postgres: rm -rf <data_dir>/*
+#   3. As postgres: pg_basebackup -h <leader_ip> -U replicator -D <data_dir>
+#                                  -X stream -P -R
+#      (-R writes standby.signal + primary_conninfo; Patroni will pick it
+#      up on next start.)
+#   4. systemctl start patroni
+#   5. patronictl list  ; confirm streaming.
 
-- name: "PostgreSQL · replica rebuild"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+- name: Validate parameters
+  hosts: localhost
   gather_facts: false
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'replica-rebuild'"
-          - "Replace ansible/playbooks/maintenance/replica-rebuild.yml with the real playbook."
+  - name: Refuse to run without --limit
+    ansible.builtin.assert:
+      that: ansible_limit is defined
+      fail_msg: >-
+        replica-rebuild rewrites the data dir of exactly one host.  Re-run
+        with --limit <replica_host>.
+
+  - name: Assert replica_host is defined
+    ansible.builtin.assert:
+      that:
+      - replica_host is defined
+      - replica_host | length > 0
+      fail_msg: "replica_host must be provided (-e replica_host=<inventory hostname>)."
+
+  - name: Assert replica_host is in postgres_replicas or postgres_servers
+    ansible.builtin.assert:
+      that:
+      - (replica_host in (groups['postgres_replicas'] | default([])))
+        or (replica_host in (groups['postgres_servers'] | default([])))
+      fail_msg: >-
+        replica_host '{{ replica_host }}' is not in inventory groups
+        postgres_replicas or postgres_servers.
+
+- name: Rebuild Patroni replica
+  # `replica_host` is asserted-defined in the localhost play above; the
+  # `| default` guard keeps `ansible-playbook --syntax-check` happy when
+  # the var isn't supplied at parse time.
+  hosts: "{{ replica_host | default('replica_host_undefined') }}"
+  become: true
+  gather_facts: true
+  vars:
+    replica_force_pg_basebackup: false
+    replica_rebuild_timeout_s: 1800
+  tasks:
+  # --- Pre-flight ---------------------------------------------------------
+
+  - name: Refuse unless cluster is in patroni mode
+    ansible.builtin.assert:
+      that: (postgresql_ha_mode | default('standalone')) == 'patroni'
+      fail_msg: >-
+        replica-rebuild is HA-specific (Patroni reinit).  Host
+        {{ inventory_hostname }} runs postgresql_ha_mode=
+        {{ postgresql_ha_mode | default('standalone') }}.
+
+  - name: Resolve OS variant + per-OS PG paths
+    ansible.builtin.set_fact:
+      _rr_os_variant: >-
+        {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+           else ansible_facts['os_family'] }}
+
+  - name: Load postgresql OS-specific variables
+    ansible.builtin.include_vars:
+      file: "{{ playbook_dir }}/../../roles/postgresql/vars/{{ _rr_os_variant }}.yml"
+      name: _rr_pg_vars
+
+  - name: Capture cluster topology (before)
+    ansible.builtin.command:
+      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+    register: _rr_list_pre
+    changed_when: false
+
+  - name: Parse pre-rebuild topology
+    ansible.builtin.set_fact:
+      _rr_members_pre: "{{ _rr_list_pre.stdout | from_json }}"
+
+  - name: Identify current leader
+    ansible.builtin.set_fact:
+      _rr_leader: >-
+        {{ (_rr_members_pre
+            | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
+            | list | first | default({})).Member | default('') }}
+
+  - name: Identify the member entry for this host
+    ansible.builtin.set_fact:
+      _rr_self: >-
+        {{ (_rr_members_pre
+            | selectattr('Member', 'equalto', inventory_hostname)
+            | list | first | default({})) }}
+
+  - name: Refuse to rebuild the current leader
+    ansible.builtin.assert:
+      that:
+      - _rr_leader != ''
+      - _rr_leader != inventory_hostname
+      fail_msg: >-
+        {{ inventory_hostname }} is currently the Patroni leader (or no
+        leader is visible).  Switch over first via the switchover.yml
+        playbook, then re-run replica-rebuild against the now-replica.
+
+  - name: Surface rebuild plan
+    ansible.builtin.debug:
+      msg:
+      - "Rebuild plan"
+      - "  Replica host    : {{ inventory_hostname }}"
+      - "  Current leader  : {{ _rr_leader }}"
+      - "  Method          : {{ 'pg_basebackup (forced)' if replica_force_pg_basebackup | bool else 'patronictl reinit' }}"
+      - "  State (before)  : {{ _rr_self.State | default('unknown') }}"
+      - "  Lag (before MB) : {{ _rr_self['Lag in MB'] | default('?') }}"
+      - "  Timeout (s)     : {{ replica_rebuild_timeout_s }}"
+
+  # --- Path A: patronictl reinit ------------------------------------------
+
+  - name: Capture rebuild start time
+    ansible.builtin.set_fact:
+      _rr_t0: "{{ ansible_date_time.iso8601 }}"
+
+  - name: Run patronictl reinit
+    ansible.builtin.command:
+      cmd: >-
+        /usr/local/bin/patronictl -c /etc/patroni/patroni.yml
+        reinit {{ patroni_scope | default('pgclerk') }}
+        {{ inventory_hostname }} --force --wait
+    register: _rr_reinit
+    changed_when: true
+    failed_when: false
+    when: not (replica_force_pg_basebackup | bool)
+
+  - name: Surface reinit output
+    ansible.builtin.debug:
+      var: _rr_reinit.stdout_lines
+    when:
+    - not (replica_force_pg_basebackup | bool)
+    - _rr_reinit.stdout_lines is defined
+
+  - name: Decide whether reinit succeeded
+    ansible.builtin.set_fact:
+      _rr_use_basebackup: >-
+        {{ (replica_force_pg_basebackup | bool)
+           or (_rr_reinit.rc | default(1) | int != 0) }}
+
+  # --- Path B: clean-room pg_basebackup -----------------------------------
+
+  - name: Stop patroni before basebackup
+    ansible.builtin.systemd:
+      name: patroni.service
+      state: stopped
+    when: _rr_use_basebackup | bool
+
+  - name: Clear stale data dir contents
+    ansible.builtin.shell: |
+      set -euo pipefail
+      shopt -s dotglob nullglob
+      rm -rf -- {{ _rr_pg_vars.postgresql_data_dir }}/*
+    args:
+      executable: /bin/bash
+    when: _rr_use_basebackup | bool
+    changed_when: true
+
+  - name: Resolve leader IP for pg_basebackup
+    ansible.builtin.set_fact:
+      _rr_leader_ip: "{{ hostvars[_rr_leader].ansible_host | default(_rr_leader) }}"
+    when: _rr_use_basebackup | bool
+
+  - name: Run pg_basebackup from leader (clean-room)
+    become: true
+    become_user: postgres
+    ansible.builtin.command:
+      argv:
+      - "{{ _rr_pg_vars.postgresql_bin_path }}/pg_basebackup"
+      - "-h"
+      - "{{ _rr_leader_ip }}"
+      - "-U"
+      - "replicator"
+      - "-D"
+      - "{{ _rr_pg_vars.postgresql_data_dir }}"
+      - "-X"
+      - "stream"
+      - "-P"
+      - "-R"
+      environment:
+        PGPASSWORD: "{{ patroni_replicator_password | default('changeme-replicator') }}"
+    when: _rr_use_basebackup | bool
+    changed_when: true
+
+  - name: Start patroni after basebackup
+    ansible.builtin.systemd:
+      name: patroni.service
+      state: started
+    when: _rr_use_basebackup | bool
+
+  # --- Wait for streaming -------------------------------------------------
+
+  - name: Poll patronictl until this host reports state=streaming
+    ansible.builtin.command:
+      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list -f json
+    register: _rr_poll
+    changed_when: false
+    failed_when: false
+    retries: "{{ ((replica_rebuild_timeout_s | int) / 10) | int }}"
+    delay: 10
+    until:
+    - _rr_poll.rc == 0
+    - (_rr_poll.stdout | from_json
+       | selectattr('Member', 'equalto', inventory_hostname)
+       | map(attribute='State') | list | first | default('')) in ['streaming', 'running']
+
+  - name: Capture rebuild stop time
+    ansible.builtin.set_fact:
+      _rr_t1: "{{ ansible_date_time.iso8601 }}"
+
+  - name: Capture cluster topology (after)
+    ansible.builtin.command:
+      cmd: /usr/local/bin/patronictl -c /etc/patroni/patroni.yml list
+    register: _rr_list_post
+    changed_when: false
+
+  - name: Surface rebuild verdict
+    ansible.builtin.debug:
+      msg:
+      - "########################################################################"
+      - "Replica rebuild complete for {{ inventory_hostname }}"
+      - "  Method        : {{ 'pg_basebackup' if _rr_use_basebackup | bool else 'patronictl reinit' }}"
+      - "  Leader        : {{ _rr_leader }}"
+      - "  Started       : {{ _rr_t0 }}"
+      - "  Stopped       : {{ _rr_t1 }}"
+      - "  Final state   : {{ (_rr_poll.stdout | from_json | selectattr('Member', 'equalto', inventory_hostname) | map(attribute='State') | list | first | default('unknown')) }}"
+      - "  Cluster view  :"
+      - "{{ _rr_list_post.stdout }}"
+      - "########################################################################"

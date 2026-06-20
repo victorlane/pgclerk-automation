@@ -1,0 +1,59 @@
+---
+# Distro packages name the runtime user inconsistently (RHEL PGDG uses
+# postgres_exporter; Debian uses prometheus). We always ensure our own
+# system user exists so the systemd unit has a consistent identity.
+- name: Ensure system group exists
+  ansible.builtin.group:
+    name: "{{ postgres_exporter_group }}"
+    system: true
+    state: present
+
+- name: Ensure system user exists
+  ansible.builtin.user:
+    name: "{{ postgres_exporter_user }}"
+    group: "{{ postgres_exporter_group }}"
+    system: true
+    shell: /sbin/nologin
+    home: "/var/lib/{{ postgres_exporter_user }}"
+    create_home: false
+    state: present
+
+- name: Ensure config directory exists
+  ansible.builtin.file:
+    path: "{{ postgres_exporter_config_dir }}"
+    state: directory
+    owner: root
+    group: "{{ postgres_exporter_group }}"
+    mode: "0750"
+
+# DATA_SOURCE_NAME holds the password, so the env file is mode 0640 and
+# group-readable by postgres_exporter only.
+- name: Render exporter environment file
+  ansible.builtin.template:
+    src: postgres_exporter.env.j2
+    dest: "{{ postgres_exporter_env_file }}"
+    owner: root
+    group: "{{ postgres_exporter_group }}"
+    mode: "0640"
+  notify: postgres_exporter restart
+  no_log: true
+
+- name: Render systemd unit
+  ansible.builtin.template:
+    src: postgres_exporter.service.j2
+    dest: /etc/systemd/system/postgres_exporter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+  - postgres_exporter reload systemd
+  - postgres_exporter restart
+
+- name: Flush handlers so the unit is in place before enable/start
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start postgres_exporter
+  ansible.builtin.service:
+    name: postgres_exporter
+    state: started
+    enabled: true

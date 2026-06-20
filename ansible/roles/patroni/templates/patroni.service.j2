@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Patroni high-availability PostgreSQL orchestrator
+Documentation=https://patroni.readthedocs.io/
+# After-only (not Requires) for etcd + network: etcd may be running on a
+# different host, and we don't want a single missing dependency to keep
+# patroni from coming up at all -- Patroni already has its own retry loop
+# against the DCS.
+After=etcd.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=postgres
+Group=postgres
+# Patroni shells out to pg_ctl + initdb, both of which expect to find the
+# PG binaries on PATH.
+Environment=PATH={{ postgresql_bin_path }}:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/patroni /etc/patroni/patroni.yml
+# Same signal patronictl uses for a clean leader handover.
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=process
+Restart=always
+RestartSec=10
+TimeoutSec=30
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

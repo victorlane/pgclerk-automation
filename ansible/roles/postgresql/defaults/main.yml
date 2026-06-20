@@ -1,0 +1,140 @@
+---
+# PostgreSQL major version. Supported: "15", "16", "17", "18".
+postgresql_version: "18"
+
+# HA mode. Standalone = this role owns initdb, postgresql.conf, pg_hba.conf,
+# and the service unit. patroni = this role only installs packages and lays
+# down the data directory; Patroni owns config, initdb, and the unit.
+postgresql_ha_mode: standalone
+
+postgresql_log_dirname: "pg_log"
+
+# Locale configuration. libc provider with C.UTF-8 is portable across all
+# supported distros and avoids the ICU-version-skew foot-gun when restoring
+# a dump on a different host. Override per-customer when ICU is needed.
+postgresql_locale_provider: libc          # libc | icu
+postgresql_locale: "C.UTF-8"
+postgresql_icu_locale: "en-US"            # only consulted when provider=icu
+
+postgresql_port: 5432
+postgresql_listen_addresses: "localhost"
+postgresql_max_connections: 100
+
+# Auto-tuning is IMPERATIVE-ONLY -- never runs on a normal site.yml
+# invocation, because tuning a live system is a DBA decision that may
+# require a restart. Invoke explicitly:
+#
+#   ansible-playbook playbooks/maintenance/autotune.yml --limit <host>
+#
+# Or, equivalently:
+#
+#   ansible-playbook site.yml --tags autotune --limit <host>
+#
+# Both paths run the autotune.yml task subset which sets _pgtuned_* facts
+# from host RAM / vCPU.  configure.yml resolves _pg_<knob> as
+# (explicit override) -> (autotune value, when autotune ran) -> empty.
+# An empty value causes the template to omit the line entirely, so PG
+# falls back to its own default for that knob.
+postgresql_autotune: false
+
+# Workload profile. Influences a few knobs (default_statistics_target,
+# work_mem distribution, parallelism caps). Three profiles:
+#
+#   oltp    - many short-lived connections, lots of small transactions
+#             (web apps, multi-tenant SaaS). Smaller work_mem, modest
+#             default_statistics_target, conservative parallelism.
+#   mixed   - the safe middle ground. The default.
+#   dw      - few long analytical queries, batch jobs. Larger work_mem,
+#             bigger default_statistics_target, more parallelism.
+postgresql_workload_profile: mixed         # oltp | mixed | dw
+
+# Storage class. Determines random_page_cost + effective_io_concurrency.
+#
+#   ssd  - SSD, NVMe, EBS gp3/io2 (the modern default).
+#   hdd  - spinning disk. Higher random_page_cost, low IO concurrency.
+postgresql_storage_class: ssd              # ssd | hdd
+
+# Memory + tuning knobs. Leave any of these empty ("") to let auto-tuning
+# compute them; set a value to override.
+postgresql_shared_buffers: ""
+postgresql_effective_cache_size: ""
+postgresql_maintenance_work_mem: ""
+postgresql_work_mem: ""
+postgresql_wal_buffers: ""
+postgresql_min_wal_size: ""
+postgresql_max_wal_size: ""
+postgresql_checkpoint_completion_target: ""
+postgresql_random_page_cost: ""
+postgresql_effective_io_concurrency: ""
+postgresql_default_statistics_target: ""
+postgresql_max_worker_processes: ""
+postgresql_max_parallel_workers_per_gather: ""
+postgresql_max_parallel_workers: ""
+postgresql_max_parallel_maintenance_workers: ""
+
+# Only pg_stat_statements is universally useful for an MSP (query insight).
+# pgaudit, pgcrypto, citext etc. are workload-specific and should be added
+# per-customer via this var.
+postgresql_shared_preload_libraries:
+- pg_stat_statements
+
+# pgaudit (PostgreSQL Audit Extension). Off by default -- it ships with
+# PGDG (and the AL2023 native repo on PG 15/16) but the package is
+# version-specific. When enabled, the role installs pgaudit<major> and
+# the postgresql.conf template appends 'pgaudit' to shared_preload_libraries
+# plus pgaudit.log / pgaudit.log_catalog directives.
+#
+# postgresql_pgaudit_log accepts a comma-separated list of audit classes:
+#   read, write, function, role, ddl, misc, misc_set, all, none
+# Default 'ddl,role,write' is the typical compliance baseline (CIS-friendly):
+#   ddl   -- DDL is always interesting for audit
+#   role  -- GRANT/REVOKE/CREATE ROLE
+#   write -- INSERT/UPDATE/DELETE/TRUNCATE
+postgresql_pgaudit_enabled: false
+postgresql_pgaudit_log: "ddl,role,write"
+postgresql_pgaudit_log_catalog: false
+
+postgresql_databases: []
+postgresql_users: []
+postgresql_locales: []
+
+postgresql_hba_entries:
+- { type: local, database: all, user: postgres, auth_method: peer }
+- { type: local, database: all, user: all, auth_method: peer }
+- { type: host, database: all, user: all, address: "127.0.0.1/32", auth_method: scram-sha-256 }
+- { type: host, database: all, user: all, address: "::1/128", auth_method: scram-sha-256 }
+
+# Hardened template database. Off by default -- when true, the role
+# provisions postgresql_template_db with the REVOKE-on-public,
+# default-privilege-tightening, base-role-grant logic from template_db.yml,
+# and new entries in postgresql_databases default to cloning from it.
+#
+# This is an opinion, not a postgres install step. Turn it on per-customer.
+postgresql_apply_hardened_template: false
+postgresql_template_db: "template_hardened"
+postgresql_template_comment: "pgclerk hardened template"
+postgresql_template_log_min_duration: 1000
+# Extensions installed into the hardened template (only consumed when
+# postgresql_apply_hardened_template is true). Customer-specific.
+postgresql_template_extensions:
+- pg_stat_statements
+
+# pgBouncer auth helper. When pgbouncer is in inventory (group
+# 'pgbouncer_servers' is non-empty) the postgresql role installs a
+# SECURITY DEFINER function pgbouncer_get_auth(text) in every
+# postgresql_databases entry, plus the SQL role pgbouncer connects as
+# when it calls that function. The role name below is what
+# pgbouncer_databases[*].auth_user should be set to.
+#
+# postgresql_pgbouncer_install_auth_helper is derived in
+# tasks/main.yml (groups['pgbouncer_servers'] non-empty) so the
+# default here is just the fallback when something explicitly toggles it.
+# Override postgresql_pgbouncer_auth_password before the play -- there
+# is no default password.
+postgresql_pgbouncer_auth_user: pgbouncer_auth
+# postgresql_pgbouncer_install_auth_helper is intentionally NOT defaulted
+# here. The role's main.yml derives it from inventory (true when any
+# host is in pgbouncer_servers, false otherwise) when the operator has
+# not set it explicitly. Set it at play / group_vars / extra-vars scope
+# to force a value -- explicit operator wins over inventory derivation.
+# postgresql_pgbouncer_auth_password: "..."   # required when helper is on

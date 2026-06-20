@@ -1,17 +1,11 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         pg-standalone
-# title:       PostgreSQL · standalone
-# category:    install
-# surface:     postgres
-# destructive: False
-
-- name: "PostgreSQL · standalone"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
-  gather_facts: false
-  tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'pg-standalone'"
-          - "Replace ansible/playbooks/install/postgres-standalone.yml with the real playbook."
+# Atom: install + configure a single PostgreSQL node (no Patroni, no replica).
+- name: PostgreSQL standalone
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    postgresql_ha_mode: standalone
+  roles:
+  - role: os_baseline
+  - role: postgresql

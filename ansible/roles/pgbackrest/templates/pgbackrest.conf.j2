@@ -1,0 +1,81 @@
+## {{ ansible_managed }}
+## pgBackRest configuration -- managed by the pgbackrest Ansible role.
+## Manual edits will be overwritten on the next role run.
+
+[global]
+log-level-console=info
+log-level-file=detail
+log-path={{ pgbackrest_log_path }}
+process-max={{ pgbackrest_process_max }}
+start-fast=y
+stop-auto=y
+delta=y
+compress-type=zst
+compress-level=3
+archive-async=y
+spool-path={{ pgbackrest_spool_path }}
+
+{% for repo in pgbackrest_repos %}
+{%   set n = loop.index %}
+{%   if repo.type == 'server' %}
+repo{{ n }}-type=posix
+repo{{ n }}-path={{ repo.path | default(pgbackrest_repo_path) }}
+{%     if _pgbr_is_pg_node and not _pgbr_is_backup_server %}
+{#-      Resolve repo.host through ansible_host so the backup server is
+         reached by private IP rather than inventory_hostname (which won't
+         DNS-resolve unless someone wires up /etc/hosts).  Falls through
+         to the supplied value when it's already a literal IP / FQDN. -#}
+repo{{ n }}-host={{ hostvars[repo.host].ansible_host | default(repo.host) }}
+repo{{ n }}-host-user=postgres
+repo{{ n }}-host-config-path=/etc/pgbackrest
+{%     endif %}
+repo{{ n }}-retention-full={{ repo.retention_full | default(2) }}
+repo{{ n }}-retention-diff={{ repo.retention_diff | default(7) }}
+{%   elif repo.type == 's3' %}
+repo{{ n }}-type=s3
+repo{{ n }}-s3-endpoint={{ repo.endpoint }}
+repo{{ n }}-s3-bucket={{ repo.bucket }}
+repo{{ n }}-s3-region={{ repo.region | default('us-east-1') }}
+repo{{ n }}-s3-key={{ repo.key }}
+repo{{ n }}-s3-key-secret={{ repo.key_secret }}
+repo{{ n }}-path={{ repo.path | default('/pgbackrest') }}
+repo{{ n }}-retention-full={{ repo.retention_full | default(2) }}
+repo{{ n }}-retention-diff={{ repo.retention_diff | default(7) }}
+repo{{ n }}-storage-verify-tls={{ repo.verify_tls | default('y') }}
+{%   endif %}
+
+{% endfor %}
+[{{ pgbackrest_stanza }}]
+{# pgBackRest forbids configuring both pgN-host= and repoN-host= as
+   remote on the same node (error 027 "pg and repo hosts cannot both be
+   configured as remote").  The two roles in the topology need
+   asymmetric stanza sections:
+
+     On a PG NODE:
+       The repoN-host=... line in [global] above already points it at
+       the backup server.  The [stanza] section must list ONLY the
+       local PG (no peer pgN-host entries).  archive-push runs locally,
+       pgbackrest then SSHes to the repo host to deliver the segment.
+
+     On the BACKUP SERVER:
+       No repoN-host (the repo IS local).  The [stanza] section lists
+       every PG node by index so the backup server can SSH to each to
+       pull pg_control etc.  Primary first by convention.
+#}
+{% if _pgbr_is_backup_server %}
+{%   set _pg_nodes = groups['postgres_servers'] | default([]) %}
+{%   set _primary = (groups['postgres_primary'] | default([])) | first | default(_pg_nodes | first) %}
+{%   set _ordered = [_primary] + (_pg_nodes | reject('equalto', _primary) | list) %}
+{%   for host in _ordered %}
+{%     set i = loop.index %}
+pg{{ i }}-path={{ hostvars[host].postgresql_data_dir | default(postgresql_data_dir) }}
+pg{{ i }}-port={{ hostvars[host].postgresql_port | default(postgresql_port) | default(5432) }}
+pg{{ i }}-user=postgres
+pg{{ i }}-host={{ hostvars[host].ansible_host | default(host) }}
+pg{{ i }}-host-user=postgres
+{%   endfor %}
+{% else %}
+pg1-path={{ postgresql_data_dir }}
+pg1-port={{ postgresql_port | default(5432) }}
+pg1-user=postgres
+{% endif %}

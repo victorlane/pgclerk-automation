@@ -1,0 +1,103 @@
+---
+- name: Assert supported OS
+  ansible.builtin.assert:
+    that:
+    - ansible_facts['os_family'] in ['RedHat', 'Debian']
+      or ansible_facts['distribution'] == 'Amazon'
+    fail_msg: >-
+      The postgresql role supports RedHat, Debian, and Amazon Linux;
+      got distribution='{{ ansible_facts['distribution'] }}',
+      os_family='{{ ansible_facts['os_family'] }}'.
+
+- name: Assert supported HA mode
+  ansible.builtin.assert:
+    that: postgresql_ha_mode in ['standalone', 'patroni']
+    fail_msg: "postgresql_ha_mode must be 'standalone' or 'patroni'; got '{{ postgresql_ha_mode }}'."
+
+- name: Assert supported PostgreSQL version
+  ansible.builtin.assert:
+    that: postgresql_version in ['15', '16', '17', '18']
+    fail_msg: "postgresql_version must be one of 15/16/17/18; got '{{ postgresql_version }}'."
+
+- name: Assert supported locale provider
+  ansible.builtin.assert:
+    that: postgresql_locale_provider in ['libc', 'icu']
+    fail_msg: "postgresql_locale_provider must be 'libc' or 'icu'; got '{{ postgresql_locale_provider }}'."
+
+# Amazon Linux reports os_family=RedHat, but PGDG does not publish AL2023
+# RPMs -- AL2023 ships PG natively via dnf. Derive a variant key so the
+# include_vars / include_tasks dispatch can pick install-Amazon.yml etc.
+- name: Determine OS install variant (Amazon != RedHat for repo purposes)
+  ansible.builtin.set_fact:
+    _pg_os_variant: >-
+      {{ 'Amazon' if ansible_facts['distribution'] == 'Amazon'
+         else ansible_facts['os_family'] }}
+
+- name: Load OS-specific variables
+  ansible.builtin.include_vars: "{{ _pg_os_variant }}.yml"
+
+- name: Install PostgreSQL packages and (PGDG) repo
+  ansible.builtin.include_tasks: "install-{{ _pg_os_variant }}.yml"
+
+# pgaudit (opt-in). Install the per-major-version package BEFORE the
+# Patroni handoff so embedded clusters get it too -- Patroni's conf
+# rendering can then put 'pgaudit' in shared_preload_libraries safely.
+- name: Install pgaudit (opt-in)
+  ansible.builtin.include_tasks: pgaudit.yml
+  when: postgresql_pgaudit_enabled | bool
+
+# Patroni takes ownership of the service unit, postgresql.conf, pg_hba.conf,
+# and initdb. In that mode we stop here -- the patroni role does the rest.
+- name: Hand off to Patroni
+  when: postgresql_ha_mode == 'patroni'
+  ansible.builtin.meta: end_host
+
+# Configure must happen before first start so postgres comes up with our
+# postgresql.conf / pg_hba.conf, not the initdb defaults.
+- name: Render postgresql.conf and pg_hba.conf
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Ensure PostgreSQL service is started and enabled
+  ansible.builtin.service:
+    name: "{{ postgresql_service }}"
+    state: started
+    enabled: true
+
+- name: Ensure required system locales are installed
+  ansible.builtin.include_tasks: "locales-{{ _pg_os_variant }}.yml"
+
+# shared_preload_libraries requires a restart before CREATE EXTENSION will
+# succeed against the just-added libs, so flush handlers here.
+- name: Apply pending PostgreSQL restarts before template / database provisioning
+  ansible.builtin.meta: flush_handlers
+
+# Opt-in hardened-template provisioning. Off by default -- the
+# REVOKE-on-public / default-privileges / base-role pattern is one
+# specific permissions opinion, not a postgres install step.
+- name: Provision hardened template database (opt-in)
+  ansible.builtin.include_tasks: template_db.yml
+  when: postgresql_apply_hardened_template | bool
+
+- name: Create databases and users
+  ansible.builtin.include_tasks: databases.yml
+
+# Derive the pgbouncer-auth-helper flag from inventory rather than a
+# var operators have to remember to set. The rule is "true when any
+# host is in pgbouncer_servers, false otherwise". The var is left
+# undefined in defaults/main.yml so an explicit operator override at
+# play / group_vars / extra-vars scope wins -- we only set the fact
+# here when nothing else has.
+- name: Derive pgbouncer-auth-helper flag from inventory
+  ansible.builtin.set_fact:
+    postgresql_pgbouncer_install_auth_helper: >-
+      {{ (groups['pgbouncer_servers'] | default([]) | length) > 0 }}
+  when: postgresql_pgbouncer_install_auth_helper is not defined
+
+# Must run AFTER databases.yml -- the function is created in each
+# customer DB, and those DBs must exist first. Idempotent via
+# CREATE OR REPLACE.
+- name: Install pgbouncer SECURITY DEFINER auth helper
+  ansible.builtin.include_tasks: pgbouncer-auth.yml
+  when:
+  - postgresql_pgbouncer_install_auth_helper | bool
+  - postgresql_databases | length > 0

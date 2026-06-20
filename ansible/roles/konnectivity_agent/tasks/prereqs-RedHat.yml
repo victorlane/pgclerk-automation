@@ -1,0 +1,9 @@
+---
+# EL8/EL9: ca-certificates + tar (for any future tarball install path)
+# come in the base image, but on a minimal cloud-init image the agent's
+# HTTPS download fails without an explicit ca-certs install.
+- name: Install runtime pre-reqs
+  ansible.builtin.dnf:
+    name:
+    - ca-certificates
+    state: present

@@ -1,17 +1,92 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         cis-audit-cluster
-# title:       OS · CIS audit (cluster)
-# category:    maintenance
-# surface:     linux
-# destructive: False
+# Cluster-wide CIS audit.
+#
+# Runs playbooks/maintenance/cis-audit.yml across every postgres host,
+# then aggregates the per-host JSON reports into a single
+# /tmp/pgclerk-cis-report-cluster.json on the control node.
+#
+# Output shape:
+#   {
+#     "generated_at": "2025-...",
+#     "hosts": [
+#       {"host": "db1", "pass": 8, "fail": 1, "skip": 0, "findings": [...]},
+#       ...
+#     ],
+#     "totals": {"pass": 16, "fail": 2, "skip": 0}
+#   }
+#
+# Like cis-audit.yml, this play never fails on a finding. It only
+# fails when the audit itself could not run.
 
-- name: "OS · CIS audit (cluster)"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
+- name: Run per-host CIS audit
+  ansible.builtin.import_playbook: cis-audit.yml
+
+- name: Aggregate CIS reports into a single cluster report
+  hosts: postgres_servers
+  become: true
   gather_facts: false
   tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'cis-audit-cluster'"
-          - "Replace ansible/playbooks/maintenance/cis-audit-cluster.yml with the real playbook."
+  - name: Read this host's report
+    ansible.builtin.slurp:
+      src: "/tmp/pgclerk-cis-report-{{ inventory_hostname }}.json"
+    register: _cis_host_report
+    failed_when: false
+
+  - name: Stash decoded report on localhost
+    ansible.builtin.add_host:
+      name: "_cis_collector_{{ inventory_hostname }}"
+      groups: _cis_collector
+      cis_host: "{{ inventory_hostname }}"
+      cis_report: "{{ (_cis_host_report.content | b64decode | from_json)
+                      if _cis_host_report.content is defined else {} }}"
+    changed_when: false
+
+- name: Write cluster-wide aggregate
+  hosts: localhost
+  gather_facts: true
+  tasks:
+  - name: Build aggregate structure
+    ansible.builtin.set_fact:
+      _cis_cluster_report:
+        generated_at: "{{ ansible_date_time.iso8601 }}"
+        hosts: >-
+          {{ groups['_cis_collector'] | default([])
+             | map('extract', hostvars)
+             | map(attribute='cis_report')
+             | selectattr('findings', 'defined')
+             | list }}
+
+  - name: Compute totals across all hosts
+    ansible.builtin.set_fact:
+      _cis_totals:
+        pass: >-
+          {{ (_cis_cluster_report.hosts | map(attribute='findings') | flatten
+              | selectattr('status', 'equalto', 'pass') | list) | length }}
+        fail: >-
+          {{ (_cis_cluster_report.hosts | map(attribute='findings') | flatten
+              | selectattr('status', 'equalto', 'fail') | list) | length }}
+        skip: >-
+          {{ (_cis_cluster_report.hosts | map(attribute='findings') | flatten
+              | selectattr('status', 'equalto', 'skip') | list) | length }}
+
+  - name: Merge totals into the report
+    ansible.builtin.set_fact:
+      _cis_cluster_report: "{{ _cis_cluster_report | combine({'totals': _cis_totals}) }}"
+
+  - name: Persist cluster report
+    ansible.builtin.copy:
+      content: "{{ _cis_cluster_report | to_nice_json }}\n"
+      dest: /tmp/pgclerk-cis-report-cluster.json
+      mode: "0644"
+
+  - name: Surface cluster-wide summary
+    ansible.builtin.debug:
+      msg:
+      - "########################################################################"
+      - "CIS audit -- cluster"
+      - "  Hosts audited : {{ _cis_cluster_report.hosts | length }}"
+      - "  PASS          : {{ _cis_totals.pass }}"
+      - "  FAIL          : {{ _cis_totals.fail }}"
+      - "  SKIP          : {{ _cis_totals.skip }}"
+      - "  Report        : /tmp/pgclerk-cis-report-cluster.json"
+      - "########################################################################"

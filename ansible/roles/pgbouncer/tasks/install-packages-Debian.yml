@@ -1,0 +1,14 @@
+---
+# Debian main / Ubuntu universe ship pgbouncer directly -- no PGDG apt
+# source needed for v1. If the consumer wants the latest upstream
+# pgbouncer the postgresql role on the same host has already added the
+# PGDG list; apt picks the newer version automatically.
+- name: Refresh apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install pgbouncer via apt
+  ansible.builtin.apt:
+    name: "{{ pgbouncer_package }}"
+    state: present

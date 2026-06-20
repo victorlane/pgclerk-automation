@@ -1,0 +1,26 @@
+---
+# pgBackRest lives in the PGDG yum repo, NOT in EPEL or the base distro
+# repos.  PG nodes already have PGDG configured (the postgresql role's
+# install-RedHat.yml ran earlier in the play).  Standalone backup servers
+# do NOT run the postgresql role, so the repo isn't present yet -- we
+# install it here.  The PGDG noarch repo RPM is idempotent.
+- name: Resolve PGDG repo arch
+  ansible.builtin.set_fact:
+    _pgbr_pgdg_repo_arch: "{{ 'aarch64' if ansible_facts['architecture'] == 'aarch64' else 'x86_64' }}"
+
+- name: Check if PGDG repo is already configured
+  ansible.builtin.stat:
+    path: /etc/yum.repos.d/pgdg-redhat-all.repo
+  register: _pgbr_pgdg_repo_stat
+
+- name: Install PGDG RPM repository
+  ansible.builtin.dnf:
+    name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_facts['distribution_major_version'] }}-{{ _pgbr_pgdg_repo_arch }}/pgdg-redhat-repo-latest.noarch.rpm"
+    state: present
+    disable_gpg_check: true
+  when: not _pgbr_pgdg_repo_stat.stat.exists
+
+- name: Install pgBackRest via dnf
+  ansible.builtin.dnf:
+    name: "{{ pgbackrest_package }}"
+    state: present

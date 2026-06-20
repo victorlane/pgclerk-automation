@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  author: pgclerk
+  description: Common package set + EPEL/CRB enablement for EL hosts.
+  license: MIT
+  min_ansible_version: "2.18"
+  platforms:
+  - name: EL
+    versions:
+    - "8"
+    - "9"
+  - name: Amazon
+    versions:
+    - "2023"
+  galaxy_tags:
+  - packages
+  - epel
+  - dnf
+
+dependencies: []

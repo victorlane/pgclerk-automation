@@ -1,0 +1,110 @@
+---
+# Derive every memory, WAL, parallelism, and I/O knob from host facts under
+# the MSP assumption that this VM is a dedicated PostgreSQL host. Each
+# postgresql_<knob> default in defaults/main.yml is "" -- the template
+# resolves the rendered value as `postgresql_<knob> | default(_pgtuned_<knob>)`
+# so any explicit override wins.
+#
+# References:
+#   - postgresql wiki "Tuning Your PostgreSQL Server"
+#   - pgtune (https://github.com/le0pard/pgtune) for the formula shapes
+#
+# The numbers below are pgtune's "OLTP" / "Mixed" / "DW" presets adapted for
+# a dedicated DB host. We deliberately diverge from pgtune in a few places:
+#   - shared_buffers caps at ~40GB (PG's own caching diminishing returns).
+#   - random_page_cost = 1.1 for SSD (default 4.0 assumes spinning rust).
+#   - effective_io_concurrency = 200 for SSD (NVMe queue depth).
+
+- name: Capture host facts for tuning
+  ansible.builtin.set_fact:
+    _pgt_ram_mb: "{{ ansible_facts.memtotal_mb | int }}"
+    _pgt_cpus: "{{ ansible_facts.processor_vcpus | default(ansible_facts.processor_count) | int }}"
+
+- name: Compute parallelism caps
+  ansible.builtin.set_fact:
+    _pgtuned_max_worker_processes: "{{ _pgt_cpus | int }}"
+    _pgtuned_max_parallel_workers: "{{ _pgt_cpus | int }}"
+    _pgtuned_max_parallel_workers_per_gather: "{{ [(_pgt_cpus | int // 2), 4] | min }}"
+    _pgtuned_max_parallel_maintenance_workers: "{{ [(_pgt_cpus | int // 2), 4] | min }}"
+
+# Memory tuning. shared_buffers = 25% RAM with a hard cap; effective_cache_size
+# = 75% RAM (planner hint, not allocation); maintenance_work_mem = 5% RAM
+# capped at 2GB. work_mem is the trickiest: it's per-sort-node, not per-query,
+# and a query can have many sort nodes; divide remaining RAM by
+# max_connections * 3 to stay safe. Workload profile shifts work_mem +/-.
+- name: Compute memory tuning
+  ansible.builtin.set_fact:
+    _pgtuned_shared_buffers_mb: "{{ [((_pgt_ram_mb | int) // 4), 40960] | min }}"
+    _pgtuned_effective_cache_mb: "{{ ((_pgt_ram_mb | int) * 3) // 4 }}"
+    _pgtuned_maint_work_mb: "{{ [((_pgt_ram_mb | int) // 20), 2048] | min }}"
+
+# work_mem: (remaining RAM after shared_buffers + maintenance) divided
+# across (max_connections * concurrent_sort_factor). DW workloads tolerate
+# more memory per sort because they have few sessions; OLTP needs less.
+- name: Compute work_mem divisor (workload-dependent)
+  ansible.builtin.set_fact:
+    _pgt_work_divisor: >-
+      {{ {'oltp': 6, 'mixed': 3, 'dw': 2}[postgresql_workload_profile] }}
+
+- name: Compute work_mem
+  ansible.builtin.set_fact:
+    _pgtuned_work_mem_mb: >-
+      {{ [
+           [((_pgt_ram_mb | int - _pgtuned_shared_buffers_mb | int - _pgtuned_maint_work_mb | int)
+              // (postgresql_max_connections | int * _pgt_work_divisor | int)),
+            1] | max,
+           1024
+         ] | min }}
+
+# WAL + checkpointing. max_wal_size between checkpoints; larger = better
+# throughput but longer crash recovery. Use RAM/16 as a rough proxy for
+# disk-throughput class, clamped to 2-16GB.
+- name: Compute WAL sizing
+  ansible.builtin.set_fact:
+    _pgtuned_max_wal_size_mb: "{{ [[((_pgt_ram_mb | int) // 16), 16384] | min, 2048] | max }}"
+
+- name: Compute min_wal_size from max
+  ansible.builtin.set_fact:
+    _pgtuned_min_wal_size_mb: "{{ (_pgtuned_max_wal_size_mb | int) // 4 }}"
+
+# wal_buffers is normally 1/32 of shared_buffers, capped at 16MB. PG can
+# auto-compute via -1 but explicit avoids surprises.
+- name: Compute wal_buffers
+  ansible.builtin.set_fact:
+    _pgtuned_wal_buffers_mb: "{{ [((_pgtuned_shared_buffers_mb | int) // 32), 16] | min }}"
+
+# Storage-class derived I/O knobs. SSD/EBS gp3 looks like a single fast disk
+# with high concurrency; HDD looks the opposite.
+- name: Compute I/O tuning (storage_class={{ postgresql_storage_class }})
+  ansible.builtin.set_fact:
+    _pgtuned_random_page_cost: >-
+      {{ {'ssd': 1.1, 'hdd': 4.0}[postgresql_storage_class] }}
+    _pgtuned_effective_io_concurrency: >-
+      {{ {'ssd': 200, 'hdd': 2}[postgresql_storage_class] }}
+
+# Workload-specific knobs. checkpoint_completion_target stays at PG 14+'s
+# default of 0.9 across profiles; default_statistics_target bumps for DW.
+- name: Compute workload-specific knobs (profile={{ postgresql_workload_profile }})
+  ansible.builtin.set_fact:
+    _pgtuned_checkpoint_completion_target: "0.9"
+    _pgtuned_default_statistics_target: >-
+      {{ {'oltp': 100, 'mixed': 100, 'dw': 500}[postgresql_workload_profile] }}
+
+- name: Display tuning summary
+  ansible.builtin.debug:
+    msg:
+    - "Auto-tuning (host={{ inventory_hostname }}, RAM={{ _pgt_ram_mb }}MB, vCPU={{ _pgt_cpus }}, profile={{ postgresql_workload_profile }}, storage={{ postgresql_storage_class }})"
+    - "  shared_buffers              = {{ postgresql_shared_buffers              | default(_pgtuned_shared_buffers_mb            ~ 'MB', true) }}"
+    - "  effective_cache_size        = {{ postgresql_effective_cache_size        | default(_pgtuned_effective_cache_mb           ~ 'MB', true) }}"
+    - "  maintenance_work_mem        = {{ postgresql_maintenance_work_mem        | default(_pgtuned_maint_work_mb                ~ 'MB', true) }}"
+    - "  work_mem                    = {{ postgresql_work_mem                    | default(_pgtuned_work_mem_mb                  ~ 'MB', true) }}"
+    - "  wal_buffers                 = {{ postgresql_wal_buffers                 | default(_pgtuned_wal_buffers_mb               ~ 'MB', true) }}"
+    - "  min/max_wal_size            = {{ postgresql_min_wal_size                | default(_pgtuned_min_wal_size_mb              ~ 'MB', true) }} / {{ postgresql_max_wal_size | default(_pgtuned_max_wal_size_mb ~ 'MB', true) }}"
+    - "  checkpoint_completion_target= {{ postgresql_checkpoint_completion_target| default(_pgtuned_checkpoint_completion_target, true) }}"
+    - "  random_page_cost            = {{ postgresql_random_page_cost            | default(_pgtuned_random_page_cost,             true) }}"
+    - "  effective_io_concurrency    = {{ postgresql_effective_io_concurrency    | default(_pgtuned_effective_io_concurrency,     true) }}"
+    - "  default_statistics_target   = {{ postgresql_default_statistics_target   | default(_pgtuned_default_statistics_target,    true) }}"
+    - "  max_worker_processes        = {{ postgresql_max_worker_processes        | default(_pgtuned_max_worker_processes,         true) }}"
+    - "  max_parallel_workers        = {{ postgresql_max_parallel_workers        | default(_pgtuned_max_parallel_workers,         true) }}"
+    - "  max_parallel_*_per_gather   = {{ postgresql_max_parallel_workers_per_gather | default(_pgtuned_max_parallel_workers_per_gather, true) }}"
+    - "  max_parallel_maintenance    = {{ postgresql_max_parallel_maintenance_workers | default(_pgtuned_max_parallel_maintenance_workers, true) }}"

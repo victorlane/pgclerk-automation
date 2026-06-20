@@ -1,17 +1,15 @@
 ---
-# Stub generated from meta/catalogue.yml — replace with real automation.
-# key:         pgbackrest-repo
-# title:       pgBackRest · repository host
-# category:    install
-# surface:     postgres
-# destructive: False
+# Atom: pgBackRest on PG nodes (clients) + backup_servers (repo host).
+- name: OS baseline on backup hosts
+  hosts: backup_servers
+  become: true
+  gather_facts: true
+  roles:
+    - role: os_baseline
 
-- name: "pgBackRest · repository host"
-  hosts: "{{ pgm_target_hosts | default('all') }}"
-  gather_facts: false
-  tasks:
-    - name: Announce stub dispatch
-      ansible.builtin.debug:
-        msg:
-          - "pgclerk: dispatched stub for 'pgbackrest-repo'"
-          - "Replace ansible/playbooks/install/pgbackrest-repo.yml with the real playbook."
+- name: pgBackRest install + configure
+  hosts: postgres_servers:backup_servers
+  become: true
+  gather_facts: true
+  roles:
+    - role: pgbackrest

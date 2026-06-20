@@ -1,0 +1,52 @@
+---
+# Promote etcd_listen_ip / etcd_advertise_ip from role defaults into actual
+# hostvars facts.  Ansible role defaults live only in the executing host's
+# scope -- they are NOT visible via hostvars[other_host], which is how the
+# template below renders the initial-cluster peer list.  Setting them as
+# facts here makes them visible cluster-wide because Ansible runs tasks in
+# lockstep across the play's hosts, so by the time the template task
+# starts, every peer has already passed this set_fact.
+- name: Promote etcd_listen_ip / etcd_advertise_ip into hostvars
+  ansible.builtin.set_fact:
+    etcd_listen_ip: "{{ etcd_listen_ip }}"
+    etcd_advertise_ip: "{{ etcd_advertise_ip }}"
+
+# Decide bootstrap state per host: if the member directory already exists this
+# node has joined the cluster before, so use "existing"; otherwise "new".
+- name: Probe existing etcd member data
+  ansible.builtin.stat:
+    path: "{{ etcd_data_dir }}/member"
+  register: etcd_member_dir
+
+- name: Set initial cluster state fact
+  ansible.builtin.set_fact:
+    etcd_initial_cluster_state: "{{ 'existing' if etcd_member_dir.stat.exists else 'new' }}"
+
+- name: Render etcd configuration
+  ansible.builtin.template:
+    src: etcd.conf.yaml.j2
+    dest: "{{ etcd_config_dir }}/etcd.conf.yaml"
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "0640"
+  notify: etcd restart
+
+- name: Render systemd unit
+  ansible.builtin.template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+  - etcd reload systemd
+  - etcd restart
+
+- name: Flush handlers so etcd is running before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start etcd
+  ansible.builtin.service:
+    name: etcd
+    state: started
+    enabled: true
