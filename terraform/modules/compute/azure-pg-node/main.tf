@@ -37,6 +37,29 @@ variable "data_volume_gib" {
   default = 20
 }
 
+# Per-role disk knobs pgclerk's dispatcher injects via TF_VAR_*.
+# Operators can override defaults from the wizard's disk card.
+# Azure accepts disk_iops_read_write and disk_mbps_read_write only
+# on PremiumV2_LRS and UltraSSD_LRS — leave them at 0 to use the
+# SKU's default IOPS/throughput.
+variable "disk_type" {
+  type        = string
+  default     = "Premium_LRS"
+  description = "Managed disk SKU. Premium_LRS / PremiumV2_LRS / StandardSSD_LRS / Standard_LRS / UltraSSD_LRS."
+}
+
+variable "disk_iops" {
+  type        = number
+  default     = 0
+  description = "Provisioned IOPS. Honoured for PremiumV2_LRS + UltraSSD_LRS. 0 = SKU default."
+}
+
+variable "disk_throughput_mbps" {
+  type        = number
+  default     = 0
+  description = "Throughput MB/s. Honoured for PremiumV2_LRS + UltraSSD_LRS. 0 = SKU default."
+}
+
 variable "use_spot" {
   type    = bool
   default = false
@@ -153,9 +176,24 @@ resource "azurerm_managed_disk" "data" {
   name                 = "${var.name}-data"
   location             = var.location
   resource_group_name  = var.resource_group_name
-  storage_account_type = "Premium_LRS"
+  storage_account_type = var.disk_type
   create_option        = "Empty"
   disk_size_gb         = var.data_volume_gib
+
+  # Azure rejects disk_iops_read_write / disk_mbps_read_write on
+  # SKUs that don't expose them. Only PremiumV2_LRS + UltraSSD_LRS
+  # allow tuning — null them out otherwise so the SKU's default
+  # IOPS / throughput stand.
+  disk_iops_read_write = (
+    var.disk_iops > 0 && contains(["PremiumV2_LRS", "UltraSSD_LRS"], var.disk_type)
+    ? var.disk_iops
+    : null
+  )
+  disk_mbps_read_write = (
+    var.disk_throughput_mbps > 0 && contains(["PremiumV2_LRS", "UltraSSD_LRS"], var.disk_type)
+    ? var.disk_throughput_mbps
+    : null
+  )
 }
 
 resource "azurerm_virtual_machine_data_disk_attachment" "data" {

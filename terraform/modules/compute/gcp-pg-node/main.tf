@@ -33,6 +33,29 @@ variable "data_volume_gib" {
   default = 20
 }
 
+# Per-role disk knobs pgclerk's dispatcher injects via TF_VAR_*.
+# Operators can override defaults from the wizard's disk card. GCE
+# accepts provisioned_iops only on pd-extreme + hyperdisk-balanced
+# and provisioned_throughput only on hyperdisk-balanced — leave the
+# numeric knobs at 0 to let GCP use the type's default.
+variable "disk_type" {
+  type        = string
+  default     = "pd-ssd"
+  description = "PD type for the data volume. pd-ssd / pd-balanced / pd-standard / pd-extreme / hyperdisk-balanced."
+}
+
+variable "disk_iops" {
+  type        = number
+  default     = 0
+  description = "Provisioned IOPS. Honoured for pd-extreme and hyperdisk-balanced. 0 = GCP default."
+}
+
+variable "disk_throughput_mbps" {
+  type        = number
+  default     = 0
+  description = "Throughput MB/s. Honoured for hyperdisk-balanced only. 0 = GCP default."
+}
+
 variable "use_spot" {
   type    = bool
   default = false
@@ -140,8 +163,24 @@ resource "google_compute_instance" "this" {
 resource "google_compute_disk" "data" {
   name = "${var.name}-data"
   zone = var.zone
-  type = "pd-ssd"
+  type = var.disk_type
   size = var.data_volume_gib
+
+  # GCP rejects provisioned_iops on disk types that don't support it.
+  # Only pd-extreme + hyperdisk-balanced accept it; null it out
+  # otherwise so the API falls back to the type's default.
+  provisioned_iops = (
+    var.disk_iops > 0 && contains(["pd-extreme", "hyperdisk-balanced"], var.disk_type)
+    ? var.disk_iops
+    : null
+  )
+
+  # provisioned_throughput is hyperdisk-balanced only.
+  provisioned_throughput = (
+    var.disk_throughput_mbps > 0 && var.disk_type == "hyperdisk-balanced"
+    ? var.disk_throughput_mbps
+    : null
+  )
 }
 
 output "id" { value = google_compute_instance.this.id }
