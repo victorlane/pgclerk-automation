@@ -6,11 +6,10 @@ terraform {
     google = { source = "hashicorp/google", version = "~> 5.0" }
   }
   backend "s3" {
-    bucket         = "pgclerk-tf-state-eu-west-3"
-    key            = "default.tfstate"
-    region         = "eu-west-3"
-    encrypt        = true
-    dynamodb_table = "pgclerk-tf-locks"
+    # Partial backend configuration. Bucket, region, dynamodb_table,
+    # and key are injected by pgclerk's dispatcher at `terraform init`
+    # time via TF_CLI_ARGS_init=-backend-config=... so each customer's
+    # state lives in their own AWS account.
   }
 }
 
