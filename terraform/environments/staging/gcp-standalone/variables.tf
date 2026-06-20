@@ -63,3 +63,55 @@ variable "key_name" {
   type    = string
   default = "pgclerk-dev"
 }
+
+# ----- Disk knobs per role (pgclerk dispatcher injects via TF_VAR_*) -----
+variable "pg_disk_type" {
+  type    = string
+  default = "pd-ssd"
+}
+variable "pg_disk_size_gib" {
+  type    = number
+  default = 0
+}
+variable "pg_disk_iops" {
+  type    = number
+  default = 0
+}
+variable "pg_disk_throughput_mbps" {
+  type    = number
+  default = 0
+}
+
+variable "etcd_disk_type" {
+  type    = string
+  default = "pd-ssd"
+}
+variable "etcd_disk_size_gib" {
+  type    = number
+  default = 0
+}
+variable "etcd_disk_iops" {
+  type    = number
+  default = 0
+}
+variable "etcd_disk_throughput_mbps" {
+  type    = number
+  default = 0
+}
+
+variable "backup_disk_type" {
+  type    = string
+  default = "pd-ssd"
+}
+variable "backup_disk_size_gib" {
+  type    = number
+  default = 0
+}
+variable "backup_disk_iops" {
+  type    = number
+  default = 0
+}
+variable "backup_disk_throughput_mbps" {
+  type    = number
+  default = 0
+}
